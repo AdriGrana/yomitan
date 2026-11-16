@@ -289,6 +289,8 @@ export type DictionaryOptions = {
     useDeinflections: boolean;
     /** The name of the group this dictionary is organized under in the settings; empty for ungrouped. */
     group: string;
+    /** Whether this dictionary's definitions are only shown for terms that no regular (non-fallback) dictionary has. */
+    fallbackOnly: boolean;
     styles?: string;
 };
 

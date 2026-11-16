@@ -2819,13 +2819,14 @@ export class Backend {
         const enabledDictionaryMap = new Map();
         for (const dictionary of options.dictionaries) {
             if (!dictionary.enabled) { continue; }
-            const {name, alias, allowSecondarySearches, partsOfSpeechFilter, useDeinflections} = dictionary;
+            const {name, alias, allowSecondarySearches, partsOfSpeechFilter, useDeinflections, fallbackOnly} = dictionary;
             enabledDictionaryMap.set(name, {
                 index: enabledDictionaryMap.size,
                 alias,
                 allowSecondarySearches,
                 partsOfSpeechFilter,
                 useDeinflections,
+                fallbackOnly: fallbackOnly === true,
             });
         }
         return enabledDictionaryMap;

@@ -105,6 +105,8 @@ export class Translator {
             this._removeExcludedDefinitions(dictionaryEntries, excludeDictionaryDefinitions);
         }
 
+        this._removeRedundantFallbackDefinitions(dictionaryEntries, enabledDictionaryMap);
+
         if (mode !== 'simple' || useAllFrequencyDictionaries) {
             await this._addTermMeta(dictionaryEntries, enabledDictionaryMap, tagAggregator);
             await this._expandTagGroupsAndGroup(tagAggregator.getTagExpansionTargets());
@@ -916,6 +918,57 @@ export class Translator {
     }
 
     // Removing data
+
+    /**
+     * Removes the definitions of fallback-only dictionaries for every headword (term and reading)
+     * which also has a definition from a regular dictionary. A fallback dictionary's definitions
+     * therefore only remain for terms that no regular dictionary covers.
+     * @param {import('translation-internal').TermDictionaryEntry[]} dictionaryEntries
+     * @param {import('translation').TermEnabledDictionaryMap} enabledDictionaryMap
+     */
+    _removeRedundantFallbackDefinitions(dictionaryEntries, enabledDictionaryMap) {
+        /** @type {Set<string>} */
+        const fallbackDictionaries = new Set();
+        for (const [name, {fallbackOnly}] of enabledDictionaryMap) {
+            if (fallbackOnly === true) { fallbackDictionaries.add(name); }
+        }
+        if (fallbackDictionaries.size === 0) { return; }
+
+        const getKey = (/** @type {import('dictionary').TermHeadword} */ {term, reading}) => `${term}\n${reading}`;
+
+        // Entries are not necessarily grouped (e.g. "no grouping" mode), so coverage is collected across all of them.
+        /** @type {Set<string>} */
+        const coveredHeadwords = new Set();
+        for (const {definitions, headwords} of dictionaryEntries) {
+            for (const {dictionary, headwordIndices} of definitions) {
+                if (fallbackDictionaries.has(dictionary)) { continue; }
+                for (const headwordIndex of headwordIndices) {
+                    coveredHeadwords.add(getKey(headwords[headwordIndex]));
+                }
+            }
+        }
+        if (coveredHeadwords.size === 0) { return; }
+
+        for (let i = dictionaryEntries.length - 1; i >= 0; --i) {
+            const dictionaryEntry = dictionaryEntries[i];
+            const {definitions, headwords} = dictionaryEntry;
+            let changed = false;
+            for (let j = definitions.length - 1; j >= 0; --j) {
+                const {dictionary, headwordIndices} = definitions[j];
+                if (!fallbackDictionaries.has(dictionary)) { continue; }
+                if (!headwordIndices.some((headwordIndex) => coveredHeadwords.has(getKey(headwords[headwordIndex])))) { continue; }
+                definitions.splice(j, 1);
+                changed = true;
+            }
+            if (!changed) { continue; }
+
+            if (definitions.length === 0) {
+                dictionaryEntries.splice(i, 1);
+            } else {
+                this._removeUnusedHeadwords(dictionaryEntry);
+            }
+        }
+    }
 
     /**
      * @param {import('translation-internal').TermDictionaryEntry[]} dictionaryEntries

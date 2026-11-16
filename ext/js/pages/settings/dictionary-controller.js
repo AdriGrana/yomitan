@@ -80,6 +80,23 @@ class DictionaryEntry {
         this._versionNode = querySelectorNotNull(fragment, '.dictionary-revision');
         /** @type {HTMLElement} */
         this._titleContainer = querySelectorNotNull(fragment, '.dictionary-item-title-container');
+        /** @type {HTMLElement} */
+        this._fallbackLabel = querySelectorNotNull(fragment, '.dictionary-fallback-label');
+        /** @type {boolean} */
+        this._fallbackOnly = false;
+    }
+
+    /** @type {number} */
+    get index() {
+        return this._index;
+    }
+
+    /**
+     * @param {boolean} value
+     */
+    setFallbackOnly(value) {
+        this._fallbackOnly = value;
+        this._fallbackLabel.hidden = !value;
     }
 
     /** @type {string} */
@@ -244,6 +261,11 @@ class DictionaryEntry {
         this._setMenuActionEnabled(bodyNode, 'moveTo', count > 1);
         const deleteDisabled = this._dictionaryController.isDictionaryInTaskQueue(this.dictionaryTitle);
         this._setMenuActionEnabled(bodyNode, 'delete', !deleteDisabled);
+        const fallbackItem = bodyNode.querySelector('[data-menu-action="toggleFallbackOnly"]');
+        if (fallbackItem !== null) {
+            fallbackItem.textContent = (this._fallbackOnly ? 'Always show (not a fallback)' : 'Only show as fallback');
+            /** @type {HTMLElement} */ (fallbackItem).hidden = !this._dictionaryInfo.counts?.terms.total;
+        }
     }
 
     /**
@@ -262,6 +284,9 @@ class DictionaryEntry {
                 break;
             case 'setGroup':
                 void this._dictionaryController.showSetGroupModal(this._index, this.dictionaryTitle);
+                break;
+            case 'toggleFallbackOnly':
+                void this._dictionaryController.setDictionaryFallbackOnly(this._index, !this._fallbackOnly);
                 break;
             case 'rename':
                 this._showRenameModal();
@@ -345,6 +370,16 @@ class DictionaryEntry {
 
         useDeinflectionsSetting.hidden = !counts?.terms.total;
         useDeinflectionsToggle.dataset.setting = `dictionaries[${this._index}].useDeinflections`;
+
+        /** @type {?HTMLElement} */
+        const fallbackOnlySetting = modal.node.querySelector('.dictionary-fallback-only-setting');
+        /** @type {?HTMLElement} */
+        const fallbackOnlyToggle = modal.node.querySelector('.dictionary-fallback-only-toggle');
+        if (fallbackOnlySetting !== null && fallbackOnlyToggle !== null) {
+            fallbackOnlySetting.hidden = !counts?.terms.total;
+            fallbackOnlyToggle.dataset.setting = `dictionaries[${this._index}].fallbackOnly`;
+            modal.node.dataset.index = `${this._index}`;
+        }
 
         this._setupDetails(detailsTableElement);
 
@@ -709,6 +744,17 @@ export class DictionaryController {
 
         this._prepareGroups();
 
+        /** @type {?HTMLInputElement} */
+        const fallbackOnlyToggle = document.querySelector('.dictionary-fallback-only-toggle');
+        if (fallbackOnlyToggle !== null) {
+            fallbackOnlyToggle.addEventListener('settingChanged', (e) => {
+                const {detail: {value}} = /** @type {import('dom-data-binder').SettingChangedEvent} */ (e);
+                const modal = this._modalController.getModal('dictionary-details');
+                const index = Number.parseInt(modal?.node.dataset.index ?? '', 10);
+                if (!Number.isNaN(index)) { this._onDictionaryFallbackOnlyChanged(index, value === true); }
+            }, false);
+        }
+
         this._updateDictionaryEntryCount();
 
         await this._onDatabaseUpdated();
@@ -920,6 +966,7 @@ export class DictionaryController {
             partsOfSpeechFilter: true,
             useDeinflections: true,
             group: UNGROUPED_NAME,
+            fallbackOnly: false,
             styles: styles ?? '',
         };
     }
@@ -1132,7 +1179,8 @@ export class DictionaryController {
             const updateDownloadUrl = dictionaryUpdateDownloadUrlMap.get(name) ?? null;
             const dictionaryDatabaseCounts = dictionaryDatabaseCountsMap.get(name) ?? null;
             const hidden = (collapsedGroups.get(group) === true);
-            this._createDictionaryEntry(i, dictionaryInfo, updateDownloadUrl, dictionaryDatabaseCounts, group, hidden);
+            const entry = this._createDictionaryEntry(i, dictionaryInfo, updateDownloadUrl, dictionaryDatabaseCounts, group, hidden);
+            entry.setFallbackOnly(dictionaryOptionsArray[i].fallbackOnly === true);
         }
         createHeadersUntil(groups.length);
 
@@ -1404,6 +1452,7 @@ export class DictionaryController {
      * @param {import('dictionary-database').DictionaryCountGroup|null} dictionaryDatabaseCounts
      * @param {string} groupName
      * @param {boolean} hidden
+     * @returns {DictionaryEntry}
      */
     _createDictionaryEntry(index, dictionaryInfo, updateDownloadUrl, dictionaryDatabaseCounts, groupName, hidden) {
         const fragment = this.instantiateTemplateFragment('dictionary');
@@ -1417,6 +1466,25 @@ export class DictionaryController {
         container.insertBefore(fragment, relative);
 
         this._updateDictionaryEntryCount();
+        return entry;
+    }
+
+    /**
+     * @param {number} index
+     * @param {boolean} value
+     */
+    async setDictionaryFallbackOnly(index, value) {
+        await this._settingsController.modifyProfileSettings([{action: 'set', path: `dictionaries[${index}].fallbackOnly`, value}]);
+        this._onDictionaryFallbackOnlyChanged(index, value);
+    }
+
+    /**
+     * @param {number} index
+     * @param {boolean} value
+     */
+    _onDictionaryFallbackOnlyChanged(index, value) {
+        const entry = this._dictionaryEntries.find((e) => e.index === index);
+        if (typeof entry !== 'undefined') { entry.setFallbackOnly(value); }
     }
 
 

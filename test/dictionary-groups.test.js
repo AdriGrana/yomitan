@@ -33,6 +33,7 @@ function createDictionary(name, group) {
         partsOfSpeechFilter: true,
         useDeinflections: true,
         group,
+        fallbackOnly: false,
     };
 }
 

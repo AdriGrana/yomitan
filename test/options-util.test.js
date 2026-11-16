@@ -482,6 +482,7 @@ function createProfileOptionsUpdatedTestData1() {
                 partsOfSpeechFilter: true,
                 useDeinflections: true,
                 group: '',
+                fallbackOnly: false,
             },
             {
                 name: 'Test Dictionary 1',
@@ -492,6 +493,7 @@ function createProfileOptionsUpdatedTestData1() {
                 partsOfSpeechFilter: true,
                 useDeinflections: true,
                 group: '',
+                fallbackOnly: false,
             },
             {
                 name: 'Test Dictionary 3',
@@ -502,6 +504,7 @@ function createProfileOptionsUpdatedTestData1() {
                 partsOfSpeechFilter: true,
                 useDeinflections: true,
                 group: '',
+                fallbackOnly: false,
             },
         ],
         dictionaryGroups: [],

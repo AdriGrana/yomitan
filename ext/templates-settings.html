@@ -54,6 +54,7 @@
     <div class="dictionary-item-title-container">
         <span>
             <strong class="dictionary-title dictionary-alias"></strong> <span class="light dictionary-revision"></span>
+            <span class="dictionary-fallback-label" title="Only shown for terms which no regular dictionary has" hidden>fallback</span>
         </span>
         <button type="button" class="dictionary-outdated-button" hidden>
             <div class="badge warning-badge"><span class="icon" data-icon="exclamation-point-short"></span></div>
@@ -116,6 +117,7 @@
     <button type="button" class="popup-menu-item" data-menu-action="rename">Rename&hellip;</button>
     <button type="button" class="popup-menu-item" data-menu-action="moveTo">Move to&hellip;</button>
     <button type="button" class="popup-menu-item" data-menu-action="setGroup">Move to group&hellip;</button>
+    <button type="button" class="popup-menu-item" data-menu-action="toggleFallbackOnly">Only show as fallback</button>
     <button type="button" class="popup-menu-item" data-menu-action="delete">Delete</button>
 </div></div></div></template>
 <template id="dictionary-group-menu-template"><div class="popup-menu-container" tabindex="-1" role="dialog"><div class="popup-menu"><div class="popup-menu-body">

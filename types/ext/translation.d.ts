@@ -164,6 +164,11 @@ export type FindTermDictionary = {
      * Whether to use the deinflections from this dictionary.
      */
     useDeinflections: boolean;
+    /**
+     * Whether this dictionary's definitions should only be shown for terms
+     * which have no definitions from any non-fallback dictionary.
+     */
+    fallbackOnly?: boolean;
 };
 
 export type TermEnabledDictionaryMap = Map<string, FindTermDictionary>;

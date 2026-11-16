@@ -2449,6 +2449,18 @@ button.hotkey-list-item-enabled-button[data-scope-count='0'] {
     background-color: var(--background-color-light);
     cursor: grab;
 }
+.dictionary-fallback-label {
+    margin-left: 0.375em;
+    padding: 0 0.5em;
+    border: var(--thin-border-size) solid var(--separator-color2);
+    border-radius: 1em;
+    font-size: 0.85em;
+    color: var(--text-color-light2);
+    white-space: nowrap;
+}
+.dictionary-fallback-label[hidden] {
+    display: none;
+}
 .dictionary-group-title-container {
     width: 100%;
 }

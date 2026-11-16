@@ -922,7 +922,8 @@
                                         "definitionsCollapsible",
                                         "partsOfSpeechFilter",
                                         "useDeinflections",
-                                        "group"
+                                        "group",
+                                        "fallbackOnly"
                                     ],
                                     "properties": {
                                         "name": {
@@ -957,6 +958,10 @@
                                         "group": {
                                             "type": "string",
                                             "default": ""
+                                        },
+                                        "fallbackOnly": {
+                                            "type": "boolean",
+                                            "default": false
                                         }
                                     }
                                 }
