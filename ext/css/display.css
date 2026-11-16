@@ -1263,6 +1263,27 @@ button.action-button:active:not(:disabled) {
     transition: background-color var(--animation-duration) ease-in-out;
 }
 
+.definition-note-actions {
+    flex: 0 0 auto;
+    display: flex;
+    flex-flow: row nowrap;
+    align-items: flex-start;
+}
+.definition-note-actions:empty {
+    display: none;
+}
+button.action-button.definition-save-button {
+    --action-button-size: calc(1em * 12 / 14);
+    opacity: 0.6;
+}
+button.action-button.definition-save-button:hover,
+button.action-button.definition-save-button:focus-visible {
+    opacity: 1;
+}
+button.action-button.definition-save-button[hidden] {
+    display: none;
+}
+
 /* Collapse & Expand */
 button.expansion-button {
     --button-content-color: var(--text-color-light4);

@@ -321,6 +321,8 @@ export type AnkiOptions = {
     checkForDuplicates: boolean;
     fieldTemplates: string | null;
     suspendNewCards: boolean;
+    /** Whether each dictionary in a term entry gets its own button for adding a note with only that dictionary's definitions. */
+    showDictionarySaveButtons: boolean;
     displayTagsAndFlags: AnkiDisplayTagsAndFlags;
     targetTags: string[];
     noteGuiMode: AnkiNoteGuiMode;

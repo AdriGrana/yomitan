@@ -67,6 +67,10 @@ export class DisplayAnki {
         /** @type {boolean} */
         this._suspendNewCards = false;
         /** @type {boolean} */
+        this._showDictionarySaveButtons = true;
+        /** @type {(event: MouseEvent) => void} */
+        this._onDefinitionNoteSaveBind = this._onDefinitionNoteSave.bind(this);
+        /** @type {boolean} */
         this._compactTags = false;
         /** @type {import('settings').ResultOutputMode} */
         this._resultOutputMode = 'split';
@@ -208,6 +212,7 @@ export class DisplayAnki {
                 duplicateScopeCheckAllModels,
                 duplicateBehavior,
                 suspendNewCards,
+                showDictionarySaveButtons,
                 checkForDuplicates,
                 displayTagsAndFlags,
                 cardFormats,
@@ -222,6 +227,7 @@ export class DisplayAnki {
 
         this._checkForDuplicates = checkForDuplicates;
         this._suspendNewCards = suspendNewCards;
+        this._showDictionarySaveButtons = showDictionarySaveButtons;
         this._compactTags = compactTags;
         this._resultOutputMode = resultOutputMode;
         this._glossaryLayoutMode = glossaryLayoutMode;
@@ -282,6 +288,93 @@ export class DisplayAnki {
         }
         const index = this._display.getElementDictionaryEntryIndex(element);
         void this._saveAnkiNote(index, Number.parseInt(cardFormatIndex, 10));
+    }
+
+    /**
+     * Handles the per-dictionary save buttons, which add a note containing only one dictionary's definitions.
+     * @param {MouseEvent} e
+     */
+    _onDefinitionNoteSave(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const element = /** @type {HTMLElement} */ (e.currentTarget);
+        const cardFormatIndex = Number.parseInt(element.dataset.cardFormatIndex ?? '', 10);
+        const definitionNode = /** @type {?HTMLElement} */ (element.closest('.definition-item'));
+        const dictionary = definitionNode?.dataset.dictionary;
+        if (!Number.isInteger(cardFormatIndex) || typeof dictionary !== 'string') { return; }
+        const index = this._display.getElementDictionaryEntryIndex(element);
+        void this._saveAnkiNote(index, cardFormatIndex, dictionary);
+    }
+
+    /**
+     * Creates the per-dictionary save buttons of an entry for one card format.
+     * They are only added when the entry has definitions from more than one dictionary,
+     * since otherwise they would do the same thing as the main button.
+     * @param {number} index
+     * @param {number} cardFormatIndex
+     */
+    _createDefinitionSaveButtons(index, cardFormatIndex) {
+        if (!this._showDictionarySaveButtons) { return; }
+        const entry = this._getEntry(index);
+        const dictionaryEntry = this._display.dictionaryEntries[index];
+        if (entry === null || typeof dictionaryEntry === 'undefined' || dictionaryEntry.type !== 'term') { return; }
+        /** @type {Map<string, string>} */
+        const dictionaries = new Map();
+        for (const {dictionary, dictionaryAlias} of dictionaryEntry.definitions) { dictionaries.set(dictionary, dictionaryAlias); }
+        if (dictionaries.size < 2) { return; }
+
+        const cardFormat = this._cardFormats[cardFormatIndex];
+        /** @type {Set<string>} */
+        const handledDictionaries = new Set();
+        for (const definitionNode of /** @type {NodeListOf<HTMLElement>} */ (entry.querySelectorAll('.definition-item'))) {
+            const {dictionary} = definitionNode.dataset;
+            const container = definitionNode.querySelector('.definition-note-actions');
+            // A dictionary can have several definition items in one entry; one button covers all of them.
+            if (typeof dictionary !== 'string' || container === null || !dictionaries.has(dictionary)) { continue; }
+            if (container.querySelector(`.definition-save-button[data-card-format-index="${cardFormatIndex}"]`) !== null) {
+                handledDictionaries.add(dictionary);
+                continue;
+            }
+            if (handledDictionaries.has(dictionary)) { continue; }
+            handledDictionaries.add(dictionary);
+
+            const button = /** @type {HTMLButtonElement} */ (this._display.displayGenerator.instantiateTemplate('definition-save-button'));
+            /** @type {HTMLElement} */
+            const iconSpan = querySelectorNotNull(button, '.action-icon');
+            button.dataset.cardFormatIndex = `${cardFormatIndex}`;
+            button.dataset.titleBase = `${cardFormat.name} note with only ${dictionaries.get(dictionary) ?? dictionary}`;
+            iconSpan.dataset.icon = cardFormat.icon;
+            this._eventListeners.addEventListener(button, 'click', this._onDefinitionNoteSaveBind);
+            container.appendChild(button);
+        }
+        this._syncDefinitionSaveButtons(index, cardFormatIndex);
+    }
+
+    /**
+     * Makes the per-dictionary save buttons follow the state of the entry's main save button
+     * (disabled, hidden, duplicate/overwrite appearance).
+     * @param {number} index
+     * @param {number} cardFormatIndex
+     */
+    _syncDefinitionSaveButtons(index, cardFormatIndex) {
+        const entry = this._getEntry(index);
+        const mainButton = this._saveButtonFind(index, cardFormatIndex);
+        if (entry === null || mainButton === null) { return; }
+        const mainIcon = /** @type {?HTMLElement} */ (mainButton.querySelector('.action-icon'));
+        const mainTitle = mainButton.getAttribute('title') ?? '';
+        let verb = 'Add';
+        if (mainTitle.startsWith('Overwrite')) {
+            verb = 'Overwrite';
+        } else if (mainTitle.startsWith('Add duplicate')) {
+            verb = 'Add duplicate';
+        }
+        for (const button of /** @type {NodeListOf<HTMLButtonElement>} */ (entry.querySelectorAll(`.definition-save-button[data-card-format-index="${cardFormatIndex}"]`))) {
+            button.disabled = mainButton.disabled;
+            button.hidden = mainButton.hidden;
+            button.title = (mainButton.disabled && this._duplicateBehavior === 'prevent' && mainTitle === 'Duplicate notes are disabled' ? mainTitle : `${verb} ${button.dataset.titleBase}`);
+            const icon = /** @type {?HTMLElement} */ (button.querySelector('.action-icon'));
+            if (icon !== null && mainIcon !== null && typeof mainIcon.dataset.icon === 'string') { icon.dataset.icon = mainIcon.dataset.icon; }
+        }
     }
 
     /**
@@ -633,6 +726,7 @@ export class DisplayAnki {
                     if (Array.isArray(noteIds) && noteIds.length > 0) {
                         this._updateSaveButtonForDuplicateBehavior(button, noteIds);
                     }
+                    this._createDefinitionSaveButtons(entryIndex, cardFormatIndex);
                 }
 
                 const validNoteIds = noteIds?.filter((id) => id !== INVALID_NOTE_ID) ?? [];
@@ -777,10 +871,25 @@ export class DisplayAnki {
     }
 
     /**
+     * Creates a copy of a term entry which only has the definitions of a single dictionary.
+     * @param {import('dictionary').DictionaryEntry} dictionaryEntry
+     * @param {string} dictionary
+     * @returns {import('dictionary').DictionaryEntry}
+     */
+    _getDictionaryEntryForSingleDictionary(dictionaryEntry, dictionary) {
+        if (dictionaryEntry.type !== 'term') { return dictionaryEntry; }
+        const definitions = dictionaryEntry.definitions.filter((definition) => definition.dictionary === dictionary);
+        if (definitions.length === 0) { return dictionaryEntry; }
+        const {dictionaryIndex, dictionaryAlias} = definitions[0];
+        return {...dictionaryEntry, definitions, dictionaryIndex, dictionaryAlias};
+    }
+
+    /**
      * @param {number} dictionaryEntryIndex
      * @param {number} cardFormatIndex
+     * @param {?string} [onlyDictionary] When set, the note only contains the definitions of this dictionary.
      */
-    async _saveAnkiNote(dictionaryEntryIndex, cardFormatIndex) {
+    async _saveAnkiNote(dictionaryEntryIndex, cardFormatIndex, onlyDictionary = null) {
         const dictionaryEntries = this._display.dictionaryEntries;
         const dictionaryEntryDetails = this._dictionaryEntryDetails;
         if (!(
@@ -791,7 +900,11 @@ export class DisplayAnki {
         )) {
             return;
         }
-        const dictionaryEntry = dictionaryEntries[dictionaryEntryIndex];
+        const dictionaryEntry = (
+            typeof onlyDictionary === 'string' ?
+            this._getDictionaryEntryForSingleDictionary(dictionaryEntries[dictionaryEntryIndex], onlyDictionary) :
+            dictionaryEntries[dictionaryEntryIndex]
+        );
         const details = dictionaryEntryDetails[dictionaryEntryIndex].noteMap.get(cardFormatIndex);
         if (typeof details === 'undefined') { return; }
 
@@ -804,10 +917,12 @@ export class DisplayAnki {
         const allErrors = [];
 
         button.disabled = true;
+        this._syncDefinitionSaveButtons(dictionaryEntryIndex, cardFormatIndex);
         setTimeout(() => {
             if (this._duplicateBehavior !== 'prevent' || allErrors.length > 0) {
                 button.disabled = false;
             }
+            this._syncDefinitionSaveButtons(dictionaryEntryIndex, cardFormatIndex);
         }, 2500);
 
         this._hideErrorNotification(true);
@@ -830,6 +945,7 @@ export class DisplayAnki {
             allErrors.push(toError(e));
         } finally {
             progressIndicatorVisible.clearOverride(overrideToken);
+            this._syncDefinitionSaveButtons(dictionaryEntryIndex, cardFormatIndex);
         }
 
         if (allErrors.length > 0) {

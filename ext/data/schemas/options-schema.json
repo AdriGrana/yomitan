@@ -1034,6 +1034,7 @@
                                     "duplicateBehavior",
                                     "fieldTemplates",
                                     "suspendNewCards",
+                                    "showDictionarySaveButtons",
                                     "displayTagsAndFlags",
                                     "targetTags",
                                     "noteGuiMode",
@@ -1182,6 +1183,10 @@
                                     "fieldTemplates": {
                                         "type": ["string", "null"],
                                         "default": null
+                                    },
+                                    "showDictionarySaveButtons": {
+                                        "type": "boolean",
+                                        "default": true
                                     },
                                     "suspendNewCards": {
                                         "type": "boolean",

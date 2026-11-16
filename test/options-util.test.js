@@ -553,6 +553,7 @@ function createProfileOptionsUpdatedTestData1() {
             checkForDuplicates: true,
             fieldTemplates: null,
             suspendNewCards: false,
+            showDictionarySaveButtons: true,
             noteGuiMode: 'browse',
             apiKey: '',
             downloadTimeout: 0,
