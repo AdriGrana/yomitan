@@ -2425,6 +2425,64 @@ button.hotkey-list-item-enabled-button[data-scope-count='0'] {
 }
 .dictionary-list-index {
     margin-right: 0.5em;
+    min-width: 1.5em;
+    text-align: right;
+    cursor: grab;
+    user-select: none;
+}
+.dictionary-row,
+.dictionary-group-header {
+    grid-column: 1 / -1;
+    width: 100%;
+    display: grid;
+    grid-template-columns: subgrid;
+    place-items: center start;
+}
+.dictionary-row[hidden],
+.dictionary-group-header[hidden] {
+    display: none;
+}
+.dictionary-group-header {
+    margin-top: 0.5em;
+    border-top: var(--thin-border-size) solid var(--separator-color2);
+    border-bottom: var(--thin-border-size) solid var(--separator-color2);
+    background-color: var(--background-color-light);
+    cursor: grab;
+}
+.dictionary-group-title-container {
+    width: 100%;
+}
+.dictionary-group-name {
+    font-size: 1.05em;
+}
+.dictionary-group-header[data-ungrouped=true] .dictionary-group-name {
+    font-style: italic;
+}
+.dictionary-group-collapse-button .icon {
+    transition: transform var(--animation-duration) ease-in-out;
+}
+.dictionary-group-header[data-collapsed=true] .dictionary-group-collapse-button .icon {
+    transform: rotate(-90deg);
+}
+.dictionary-row[data-drag-source=true],
+.dictionary-group-header[data-drag-source=true] {
+    opacity: 0.4;
+}
+.dictionary-row[data-drop-position=before],
+.dictionary-group-header[data-drop-position=before] {
+    box-shadow: inset 0 0.2em 0 0 var(--accent-color);
+}
+.dictionary-row[data-drop-position=after],
+.dictionary-group-header[data-drop-position=after] {
+    box-shadow: inset 0 -0.2em 0 0 var(--accent-color);
+}
+.dictionary-group-header[data-drop-position=into] {
+    box-shadow: inset 0 0 0 0.15em var(--accent-color);
+}
+#dictionary-group-name-input,
+#dictionary-set-group-select,
+#dictionary-set-group-new-input {
+    width: 100%;
 }
 .dictionary-list[data-count='0']>.dictionary-item-top {
     display: none;

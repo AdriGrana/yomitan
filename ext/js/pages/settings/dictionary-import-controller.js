@@ -24,6 +24,7 @@ import {getKebabCase} from '../../data/anki-template-util.js';
 import {DictionaryWorker} from '../../dictionary/dictionary-worker.js';
 import {querySelectorNotNull} from '../../dom/query-selector.js';
 import {DictionaryController} from './dictionary-controller.js';
+import {getUngroupedInsertIndex} from './dictionary-groups.js';
 
 export class DictionaryImportController {
     /**
@@ -700,7 +701,8 @@ export class DictionaryImportController {
             const path1 = `profiles[${i}].options.dictionaries`;
 
             if (profilesDictionarySettings === null || typeof profilesDictionarySettings[profileId] === 'undefined') {
-                targets.push({action: 'push', path: path1, items: [defaultSettings]});
+                const start = getUngroupedInsertIndex(options.dictionaries, options.dictionaryGroups);
+                targets.push({action: 'splice', path: path1, start, deleteCount: 0, items: [defaultSettings]});
             } else {
                 const {index, alias, name, ...currentSettings} = profilesDictionarySettings[profileId];
                 const newAlias = alias === name ? title : alias;

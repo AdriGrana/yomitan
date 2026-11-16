@@ -24,6 +24,7 @@ import {deferPromise} from '../../core/utilities.js';
 import {compareRevisions} from '../../dictionary/dictionary-data-util.js';
 import {DictionaryWorker} from '../../dictionary/dictionary-worker.js';
 import {querySelectorNotNull} from '../../dom/query-selector.js';
+import {normalizeDictionaryGroups, sortDictionariesByGroup, UNGROUPED_LABEL, UNGROUPED_NAME} from './dictionary-groups.js';
 
 const ajvSchemas = /** @type {import('dictionary-importer').CompiledSchemaValidators} */ (/** @type {unknown} */ (ajvSchemas0));
 
@@ -51,6 +52,10 @@ class DictionaryEntry {
         this._databaseCounts = dictionaryDatabaseCounts;
         /** @type {ChildNode[]} */
         this._nodes = [...fragment.childNodes];
+        /** @type {HTMLElement} */
+        this._rowNode = querySelectorNotNull(fragment, '.dictionary-row');
+        /** @type {HTMLElement} */
+        this._indexNode = querySelectorNotNull(fragment, '.dictionary-list-index');
         /** @type {HTMLInputElement} */
         this._enabledCheckbox = querySelectorNotNull(fragment, '.dictionary-enabled');
         /** @type {HTMLButtonElement} */
@@ -82,12 +87,18 @@ class DictionaryEntry {
         return this._dictionaryInfo.title;
     }
 
-    /** */
-    prepare() {
-        //
+    /**
+     * @param {string} groupName
+     * @param {boolean} hidden
+     */
+    prepare(groupName, hidden) {
         const index = this._index;
         const {revision, version, importSuccess} = this._dictionaryInfo;
 
+        this._rowNode.dataset.index = `${index}`;
+        this._rowNode.dataset.groupName = groupName;
+        this._rowNode.hidden = hidden;
+        this._indexNode.textContent = `${index + 1}`;
         this._aliasNode.dataset.setting = `dictionaries[${index}].alias`;
         this._versionNode.textContent = `rev.${revision}`;
         this._outdatedButton.hidden = (version >= 3);
@@ -249,6 +260,9 @@ class DictionaryEntry {
             case 'moveTo':
                 this._showMoveToModal();
                 break;
+            case 'setGroup':
+                void this._dictionaryController.showSetGroupModal(this._index, this.dictionaryTitle);
+                break;
             case 'rename':
                 this._showRenameModal();
                 break;
@@ -408,7 +422,7 @@ class DictionaryEntry {
      * @param {number} offset
      */
     _move(offset) {
-        void this._dictionaryController.moveDictionaryOptions(this._index, this._index + offset);
+        void this._dictionaryController.moveDictionaryByOffset(this._index, offset);
     }
 
     /**
@@ -636,6 +650,14 @@ export class DictionaryController {
         this._isTaskQueueRunning = false;
         /** @type {(() => void) | null} */
         this._onDictionariesUpdate = null;
+        /** @type {{name: string, node: HTMLElement, checkbox: HTMLInputElement, countNode: HTMLElement}[]} */
+        this._groupHeaders = [];
+        /** @type {EventListenerCollection} */
+        this._groupHeaderEventListeners = new EventListenerCollection();
+        /** @type {?({type: 'dictionary', index: number, node: HTMLElement}|{type: 'group', name: string, node: HTMLElement})} */
+        this._dragState = null;
+        /** @type {?HTMLElement} */
+        this._dropIndicatorNode = null;
     }
 
     /** @type {import('./modal-controller.js').ModalController} */
@@ -684,6 +706,8 @@ export class DictionaryController {
         if (this._checkIntegrityButton !== null) {
             this._checkIntegrityButton.addEventListener('click', this._onCheckIntegrityButtonClick.bind(this), false);
         }
+
+        this._prepareGroups();
 
         this._updateDictionaryEntryCount();
 
@@ -770,20 +794,92 @@ export class DictionaryController {
             return;
         }
 
+        // The dictionary joins the group of whichever dictionary currently occupies the target position.
+        const targetGroup = dictionaries[targetIndex].group;
         const item = dictionaries.splice(currentIndex, 1)[0];
+        item.group = targetGroup;
         dictionaries.splice(targetIndex, 0, item);
 
-        await this._settingsController.modifyProfileSettings([{
-            action: 'set',
-            path: 'dictionaries',
-            value: dictionaries,
-        }]);
+        await this._saveDictionaryLayout(options, options.dictionaryGroups);
+    }
 
-        /** @type {import('settings-controller').EventArgument<'dictionarySettingsReordered'>} */
-        const event = {source: this};
-        this._settingsController.trigger('dictionarySettingsReordered', event);
+    /**
+     * Moves a dictionary one step up or down. When the dictionary is at the edge of its group,
+     * it moves into the neighbouring group instead.
+     * @param {number} index
+     * @param {number} offset Either -1 or 1.
+     */
+    async moveDictionaryByOffset(index, offset) {
+        const options = await this._settingsController.getOptions();
+        const {dictionaries} = options;
+        const groups = normalizeDictionaryGroups(options.dictionaryGroups);
+        if (index < 0 || index >= dictionaries.length) { return; }
+        const item = dictionaries[index];
+        const neighborIndex = index + offset;
+        const neighbor = (neighborIndex >= 0 && neighborIndex < dictionaries.length ? dictionaries[neighborIndex] : null);
+        if (neighbor !== null && (groups.length === 0 || neighbor.group === item.group)) {
+            dictionaries.splice(index, 1);
+            dictionaries.splice(neighborIndex, 0, item);
+        } else {
+            const groupIndex = groups.findIndex(({name}) => name === item.group);
+            const targetGroupIndex = groupIndex + offset;
+            if (groupIndex < 0 || targetGroupIndex < 0 || targetGroupIndex >= groups.length) { return; }
+            const targetGroup = groups[targetGroupIndex];
+            // Sorting keeps the dictionary at the boundary, so it lands at the near edge of the new group.
+            item.group = targetGroup.name;
+            targetGroup.collapsed = false;
+        }
+        await this._saveDictionaryLayout(options, groups);
+    }
 
-        this._updateCurrentEntries(options);
+    /**
+     * @param {number} index
+     * @param {string} dictionaryTitle
+     */
+    async showSetGroupModal(index, dictionaryTitle) {
+        const modal = this._modalController.getModal('dictionary-set-group');
+        if (modal === null) { return; }
+        const options = await this._settingsController.getOptions();
+        const groups = normalizeDictionaryGroups(options.dictionaryGroups);
+        const currentGroup = (index >= 0 && index < options.dictionaries.length ? options.dictionaries[index].group : UNGROUPED_NAME);
+
+        /** @type {HTMLElement} */
+        const titleNode = querySelectorNotNull(modal.node, '.dictionary-title');
+        /** @type {HTMLSelectElement} */
+        const select = querySelectorNotNull(modal.node, '#dictionary-set-group-select');
+        /** @type {HTMLInputElement} */
+        const newInput = querySelectorNotNull(modal.node, '#dictionary-set-group-new-input');
+        /** @type {HTMLElement} */
+        const errorNode = querySelectorNotNull(modal.node, '#dictionary-set-group-error');
+
+        const fragment = document.createDocumentFragment();
+        const groupNames = (groups.length > 0 ? groups.map(({name}) => name) : [UNGROUPED_NAME]);
+        for (const name of groupNames) {
+            const option = document.createElement('option');
+            option.value = name;
+            option.dataset.kind = 'group';
+            option.textContent = (name === UNGROUPED_NAME ? UNGROUPED_LABEL : name);
+            option.selected = (name === currentGroup);
+            fragment.appendChild(option);
+        }
+        const newOption = document.createElement('option');
+        newOption.value = '';
+        newOption.dataset.kind = 'new';
+        newOption.textContent = 'New group\u2026';
+        // With no groups to choose from, creating one is the only useful choice.
+        newOption.selected = (groups.length === 0);
+        fragment.appendChild(newOption);
+        select.textContent = '';
+        select.appendChild(fragment);
+
+        modal.node.dataset.index = `${index}`;
+        titleNode.textContent = dictionaryTitle;
+        newInput.value = '';
+        errorNode.hidden = true;
+        this._onSetGroupSelectChange();
+
+        modal.setVisible(true);
+        if (groups.length === 0) { newInput.focus(); }
     }
 
     /**
@@ -823,6 +919,7 @@ export class DictionaryController {
             definitionsCollapsible: 'not-collapsible',
             partsOfSpeechFilter: true,
             useDeinflections: true,
+            group: UNGROUPED_NAME,
             styles: styles ?? '',
         };
     }
@@ -863,6 +960,11 @@ export class DictionaryController {
             for (const {title, styles} of missingDictionaries) {
                 const value = DictionaryController.createDefaultDictionarySettings(title, newDictionariesEnabled, styles);
                 dictionaryOptionsArray.push(value);
+                modified = true;
+            }
+
+            // Keep every dictionary group contiguous (e.g. new dictionaries join the ungrouped block).
+            if (sortDictionariesByGroup(dictionaryOptionsArray, profiles[i].options.dictionaryGroups)) {
                 modified = true;
             }
 
@@ -944,22 +1046,16 @@ export class DictionaryController {
         await DictionaryController.ensureDictionarySettings(this._settingsController, dictionaries, void 0, true, false);
 
         const options = await this._settingsController.getOptions();
+        if (sortDictionariesByGroup(options.dictionaries, options.dictionaryGroups)) {
+            await this._settingsController.modifyProfileSettings([{
+                action: 'set',
+                path: 'dictionaries',
+                value: options.dictionaries,
+            }]);
+        }
+
+        this._createEntries(dictionaries, options, dictionaryUpdateDownloadUrlMap, new Map());
         this._updateDictionariesEnabledWarnings(options);
-
-        /** @type {Map<string, import('dictionary-importer').Summary>} */
-        const dictionaryInfoMap = new Map();
-        for (const dictionary of dictionaries) {
-            dictionaryInfoMap.set(dictionary.title, dictionary);
-        }
-
-        const dictionaryOptionsArray = options.dictionaries;
-        for (let i = 0, ii = dictionaryOptionsArray.length; i < ii; ++i) {
-            const {name} = dictionaryOptionsArray[i];
-            const dictionaryInfo = dictionaryInfoMap.get(name);
-            const updateDownloadUrl = dictionaryUpdateDownloadUrlMap.get(name) ?? null;
-            if (typeof dictionaryInfo === 'undefined') { continue; }
-            this._createDictionaryEntry(i, dictionaryInfo, updateDownloadUrl, null);
-        }
     }
 
     /**
@@ -984,17 +1080,64 @@ export class DictionaryController {
             entry.cleanup();
         }
 
+        this._createEntries(dictionaries, options, dictionaryUpdateDownloadUrlMap, dictionaryDatabaseCountsMap);
+        this._dictionaryModalBody.scroll({top: dictionariesModalBodyScrollY});
+    }
+
+    /**
+     * Rebuilds the dictionary list, including the group headers when groups are in use.
+     * `options.dictionaries` must already be sorted by group.
+     * @param {import('dictionary-importer').Summary[]} dictionaries
+     * @param {import('settings').ProfileOptions} options
+     * @param {Map<string, string | null>} dictionaryUpdateDownloadUrlMap
+     * @param {Map<string, import('dictionary-database').DictionaryCountGroup | null>} dictionaryDatabaseCountsMap
+     */
+    _createEntries(dictionaries, options, dictionaryUpdateDownloadUrlMap, dictionaryDatabaseCountsMap) {
+        for (const entry of this._dictionaryEntries) {
+            entry.cleanup();
+        }
+        this._dictionaryEntries = [];
+        this._cleanupGroupHeaders();
+
+        /** @type {Map<string, import('dictionary-importer').Summary>} */
+        const dictionaryInfoMap = new Map();
+        for (const dictionary of dictionaries) {
+            dictionaryInfoMap.set(dictionary.title, dictionary);
+        }
+
         const dictionaryOptionsArray = options.dictionaries;
-        for (let i = 0; i < dictionaryOptionsArray.length; i++) {
-            const {name} = dictionaryOptionsArray[i];
-            /** @type {import('dictionary-importer').Summary | undefined} */
-            const dictionaryInfo = dictionaries.find((dictionary) => dictionary.title === name);
+        const groups = normalizeDictionaryGroups(options.dictionaryGroups);
+        /** @type {Map<string, boolean>} */
+        const collapsedGroups = new Map();
+        for (let i = 0, ii = groups.length; i < ii; ++i) {
+            collapsedGroups.set(groups[i].name, groups[i].collapsed);
+        }
+
+        let groupIndex = 0;
+        const createHeadersUntil = (/** @type {number} */ endIndex) => {
+            for (; groupIndex < endIndex; ++groupIndex) {
+                this._createGroupHeader(groups[groupIndex], groupIndex, groups.length);
+            }
+        };
+
+        for (let i = 0, ii = dictionaryOptionsArray.length; i < ii; ++i) {
+            const {name, group} = dictionaryOptionsArray[i];
+            if (groups.length > 0) {
+                // Headers are created lazily so that empty groups still show up in their place.
+                const index = groups.findIndex((g) => g.name === group);
+                createHeadersUntil(index + 1);
+            }
+            const dictionaryInfo = dictionaryInfoMap.get(name);
             if (typeof dictionaryInfo === 'undefined') { continue; }
             const updateDownloadUrl = dictionaryUpdateDownloadUrlMap.get(name) ?? null;
             const dictionaryDatabaseCounts = dictionaryDatabaseCountsMap.get(name) ?? null;
-            this._createDictionaryEntry(i, dictionaryInfo, updateDownloadUrl, dictionaryDatabaseCounts);
+            const hidden = (collapsedGroups.get(group) === true);
+            this._createDictionaryEntry(i, dictionaryInfo, updateDownloadUrl, dictionaryDatabaseCounts, group, hidden);
         }
-        this._dictionaryModalBody.scroll({top: dictionariesModalBodyScrollY});
+        createHeadersUntil(groups.length);
+
+        this._updateDictionaryEntryCount();
+        this._updateGroupHeaders(options);
     }
 
     /**
@@ -1039,6 +1182,8 @@ export class DictionaryController {
         for (let i = 0, ii = Math.min(entries.length, dictionaryCount); i < ii; ++i) {
             entries[i].setEnabled(dictionaries[i].enabled);
         }
+
+        this._updateGroupHeaders(options);
     }
 
     /**
@@ -1257,13 +1402,15 @@ export class DictionaryController {
      * @param {import('dictionary-importer').Summary} dictionaryInfo
      * @param {string|null} updateDownloadUrl
      * @param {import('dictionary-database').DictionaryCountGroup|null} dictionaryDatabaseCounts
+     * @param {string} groupName
+     * @param {boolean} hidden
      */
-    _createDictionaryEntry(index, dictionaryInfo, updateDownloadUrl, dictionaryDatabaseCounts) {
+    _createDictionaryEntry(index, dictionaryInfo, updateDownloadUrl, dictionaryDatabaseCounts, groupName, hidden) {
         const fragment = this.instantiateTemplateFragment('dictionary');
 
         const entry = new DictionaryEntry(this, fragment, index, dictionaryInfo, updateDownloadUrl, dictionaryDatabaseCounts);
         this._dictionaryEntries.push(entry);
-        entry.prepare();
+        entry.prepare(groupName, hidden);
 
         const container = /** @type {HTMLElement} */ (this._dictionaryEntryContainer);
         const relative = container.querySelector('.dictionary-item-bottom');
@@ -1473,5 +1620,537 @@ export class DictionaryController {
         await this._settingsController.modifyProfileSettings(targets);
 
         await this.updateDictionariesEnabled();
+    }
+
+    // Dictionary groups
+
+    /** */
+    _prepareGroups() {
+        /** @type {?HTMLButtonElement} */
+        const addGroupButton = document.querySelector('#dictionary-add-group-button');
+        if (addGroupButton !== null) {
+            addGroupButton.addEventListener('click', () => { this._showGroupNameModal(null); }, false);
+        }
+
+        /** @type {?HTMLButtonElement} */
+        const groupNameButton = document.querySelector('#dictionary-group-name-button');
+        /** @type {?HTMLInputElement} */
+        const groupNameInput = document.querySelector('#dictionary-group-name-input');
+        if (groupNameButton !== null && groupNameInput !== null) {
+            groupNameButton.addEventListener('click', () => { void this._onGroupNameConfirm(); }, false);
+            groupNameInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.isComposing) { void this._onGroupNameConfirm(); }
+            }, false);
+        }
+
+        /** @type {?HTMLSelectElement} */
+        const setGroupSelect = document.querySelector('#dictionary-set-group-select');
+        /** @type {?HTMLButtonElement} */
+        const setGroupButton = document.querySelector('#dictionary-set-group-button');
+        /** @type {?HTMLInputElement} */
+        const setGroupNewInput = document.querySelector('#dictionary-set-group-new-input');
+        if (setGroupSelect !== null && setGroupButton !== null && setGroupNewInput !== null) {
+            setGroupSelect.addEventListener('change', this._onSetGroupSelectChange.bind(this), false);
+            setGroupButton.addEventListener('click', () => { void this._onSetGroupConfirm(); }, false);
+            setGroupNewInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.isComposing) { void this._onSetGroupConfirm(); }
+            }, false);
+        }
+
+        const container = this._dictionaryEntryContainer;
+        container.addEventListener('dragstart', this._onDragStart.bind(this), false);
+        container.addEventListener('dragover', this._onDragOver.bind(this), false);
+        container.addEventListener('dragleave', this._onDragLeave.bind(this), false);
+        container.addEventListener('drop', this._onDrop.bind(this), false);
+        container.addEventListener('dragend', this._onDragEnd.bind(this), false);
+    }
+
+    /**
+     * Normalizes and saves the group list and the dictionary order, then redraws the list.
+     * @param {import('settings').ProfileOptions} options A local copy of the options, whose `dictionaries` may have been modified.
+     * @param {import('settings').DictionaryGroupOptions[]} groups
+     */
+    async _saveDictionaryLayout(options, groups) {
+        options.dictionaryGroups = normalizeDictionaryGroups(groups);
+        sortDictionariesByGroup(options.dictionaries, options.dictionaryGroups);
+
+        await this._settingsController.modifyProfileSettings([
+            {action: 'set', path: 'dictionaryGroups', value: options.dictionaryGroups},
+            {action: 'set', path: 'dictionaries', value: options.dictionaries},
+        ]);
+
+        /** @type {import('settings-controller').EventArgument<'dictionarySettingsReordered'>} */
+        const event = {source: this};
+        this._settingsController.trigger('dictionarySettingsReordered', event);
+
+        this._updateCurrentEntries(options);
+    }
+
+    /**
+     * @param {string} name
+     * @param {import('settings').DictionaryGroupOptions[]} groups
+     * @param {?string} ignoreName A name which is allowed to be reused (the group being renamed).
+     * @returns {?string} An error message, or `null` if the name is valid.
+     */
+    _validateGroupName(name, groups, ignoreName) {
+        if (name.length === 0) { return 'The group name can\u2019t be empty.'; }
+        if (name.toLowerCase() === UNGROUPED_LABEL.toLowerCase()) { return `\u201c${UNGROUPED_LABEL}\u201d is reserved for dictionaries without a group.`; }
+        if (name !== ignoreName && groups.some((group) => group.name === name)) { return 'A group with this name already exists.'; }
+        return null;
+    }
+
+    /** */
+    _cleanupGroupHeaders() {
+        this._groupHeaderEventListeners.removeAllEventListeners();
+        for (const {node} of this._groupHeaders) {
+            if (node.parentNode !== null) { node.parentNode.removeChild(node); }
+        }
+        this._groupHeaders = [];
+    }
+
+    /**
+     * @param {import('settings').DictionaryGroupOptions} group
+     * @param {number} groupIndex
+     * @param {number} groupCount
+     */
+    _createGroupHeader(group, groupIndex, groupCount) {
+        const {name, collapsed} = group;
+        const isUngrouped = (name === UNGROUPED_NAME);
+        const node = /** @type {HTMLElement} */ (this.instantiateTemplate('dictionary-group-header'));
+        /** @type {HTMLButtonElement} */
+        const collapseButton = querySelectorNotNull(node, '.dictionary-group-collapse-button');
+        /** @type {HTMLInputElement} */
+        const checkbox = querySelectorNotNull(node, '.dictionary-group-enabled');
+        /** @type {HTMLElement} */
+        const nameNode = querySelectorNotNull(node, '.dictionary-group-name');
+        /** @type {HTMLElement} */
+        const countNode = querySelectorNotNull(node, '.dictionary-group-count');
+        /** @type {HTMLButtonElement} */
+        const upButton = querySelectorNotNull(node, '.dictionary-group-move-up');
+        /** @type {HTMLButtonElement} */
+        const downButton = querySelectorNotNull(node, '.dictionary-group-move-down');
+        /** @type {HTMLButtonElement} */
+        const menuButton = querySelectorNotNull(node, '.dictionary-group-menu-button');
+
+        node.dataset.groupName = name;
+        node.dataset.collapsed = `${collapsed}`;
+        node.dataset.ungrouped = `${isUngrouped}`;
+        nameNode.textContent = (isUngrouped ? UNGROUPED_LABEL : name);
+        const isFirst = (groupIndex <= 0);
+        const isLast = (groupIndex >= groupCount - 1);
+        upButton.disabled = isFirst;
+        downButton.disabled = isLast;
+
+        const listeners = this._groupHeaderEventListeners;
+        listeners.addEventListener(collapseButton, 'click', () => { void this._setGroupCollapsed(name, !collapsed); }, false);
+        listeners.addEventListener(checkbox, 'change', () => { void this._setGroupEnabled(name, checkbox.checked); }, false);
+        listeners.addEventListener(upButton, 'click', () => { void this._moveGroup(name, groupIndex - 1); }, false);
+        listeners.addEventListener(downButton, 'click', () => { void this._moveGroup(name, groupIndex + 1); }, false);
+        listeners.addEventListener(menuButton, 'menuOpen', (/** @type {import('popup-menu').MenuOpenEvent} */ e) => {
+            const bodyNode = e.detail.menu.bodyNode;
+            /** @type {[action: string, enabled: boolean][]} */
+            const actions = [
+                ['rename', !isUngrouped],
+                ['delete', !isUngrouped],
+                ['moveToTop', !isFirst],
+                ['moveToBottom', !isLast],
+            ];
+            for (const [action, enabled] of actions) {
+                const element = /** @type {?HTMLButtonElement} */ (bodyNode.querySelector(`[data-menu-action="${action}"]`));
+                if (element !== null) { element.disabled = !enabled; }
+            }
+        }, false);
+        listeners.addEventListener(menuButton, 'menuClose', (/** @type {import('popup-menu').MenuCloseEvent} */ e) => {
+            switch (e.detail.action) {
+                case 'rename': this._showGroupNameModal(name); break;
+                case 'moveToTop': void this._moveGroup(name, 0); break;
+                case 'moveToBottom': void this._moveGroup(name, groupCount - 1); break;
+                case 'enableAll': void this._setGroupEnabled(name, true); break;
+                case 'disableAll': void this._setGroupEnabled(name, false); break;
+                case 'delete': void this._deleteGroup(name); break;
+            }
+        }, false);
+
+        const container = this._dictionaryEntryContainer;
+        container.insertBefore(node, container.querySelector('.dictionary-item-bottom'));
+        this._groupHeaders.push({name, node, checkbox, countNode});
+    }
+
+    /**
+     * Updates the counts and the enable toggle of every group header.
+     * @param {import('settings').ProfileOptions} options
+     */
+    _updateGroupHeaders(options) {
+        for (const {name, checkbox, countNode} of this._groupHeaders) {
+            let count = 0;
+            let enabledCount = 0;
+            for (const {group, enabled} of options.dictionaries) {
+                if (group !== name) { continue; }
+                ++count;
+                if (enabled) { ++enabledCount; }
+            }
+            countNode.textContent = (count > 0 ? `(${enabledCount} of ${count} enabled)` : '(empty)');
+            checkbox.checked = (count > 0 && enabledCount >= count);
+            checkbox.disabled = (count === 0);
+        }
+    }
+
+    /**
+     * @param {string} name
+     * @param {boolean} collapsed
+     */
+    async _setGroupCollapsed(name, collapsed) {
+        const options = await this._settingsController.getOptions();
+        const groups = normalizeDictionaryGroups(options.dictionaryGroups);
+        const group = groups.find((g) => g.name === name);
+        if (typeof group === 'undefined') { return; }
+        group.collapsed = collapsed;
+        await this._saveDictionaryLayout(options, groups);
+    }
+
+    /**
+     * @param {string} name
+     * @param {boolean} value
+     */
+    async _setGroupEnabled(name, value) {
+        const options = await this._settingsController.getOptions();
+        const {dictionaries} = options;
+        /** @type {import('settings-modifications').Modification[]} */
+        const targets = [];
+        for (let i = 0, ii = dictionaries.length; i < ii; ++i) {
+            if (dictionaries[i].group !== name) { continue; }
+            targets.push({action: 'set', path: `dictionaries[${i}].enabled`, value});
+        }
+        if (targets.length > 0) {
+            await this._settingsController.modifyProfileSettings(targets);
+        }
+        await this.updateDictionariesEnabled();
+    }
+
+    /**
+     * Moves a group (and therefore the priority of all of its dictionaries) to a new position.
+     * @param {string} name
+     * @param {number} targetIndex
+     */
+    async _moveGroup(name, targetIndex) {
+        const options = await this._settingsController.getOptions();
+        const groups = normalizeDictionaryGroups(options.dictionaryGroups);
+        const index = groups.findIndex((g) => g.name === name);
+        targetIndex = Math.max(0, Math.min(groups.length - 1, targetIndex));
+        if (index < 0 || index === targetIndex) { return; }
+        const group = groups.splice(index, 1)[0];
+        groups.splice(targetIndex, 0, group);
+        await this._saveDictionaryLayout(options, groups);
+    }
+
+    /**
+     * Deletes a group. Its dictionaries are kept and become ungrouped.
+     * @param {string} name
+     */
+    async _deleteGroup(name) {
+        if (name === UNGROUPED_NAME) { return; }
+        const options = await this._settingsController.getOptions();
+        const groups = normalizeDictionaryGroups(options.dictionaryGroups).filter((g) => g.name !== name);
+        for (const dictionary of options.dictionaries) {
+            if (dictionary.group === name) { dictionary.group = UNGROUPED_NAME; }
+        }
+        await this._saveDictionaryLayout(options, groups);
+    }
+
+    /**
+     * @param {?string} groupName The group to rename, or `null` to add a new group.
+     */
+    _showGroupNameModal(groupName) {
+        const modal = this._modalController.getModal('dictionary-group-name');
+        if (modal === null) { return; }
+        /** @type {HTMLElement} */
+        const titleNode = querySelectorNotNull(modal.node, '#dictionary-group-name-modal-title');
+        /** @type {HTMLInputElement} */
+        const input = querySelectorNotNull(modal.node, '#dictionary-group-name-input');
+        /** @type {HTMLElement} */
+        const errorNode = querySelectorNotNull(modal.node, '#dictionary-group-name-error');
+
+        if (groupName === null) {
+            delete modal.node.dataset.groupName;
+        } else {
+            modal.node.dataset.groupName = groupName;
+        }
+        titleNode.textContent = (groupName === null ? 'Add Dictionary Group' : 'Rename Dictionary Group');
+        input.value = groupName ?? '';
+        errorNode.hidden = true;
+
+        modal.setVisible(true);
+        input.focus();
+        input.select();
+    }
+
+    /** */
+    async _onGroupNameConfirm() {
+        const modal = this._modalController.getModal('dictionary-group-name');
+        if (modal === null) { return; }
+        /** @type {HTMLInputElement} */
+        const input = querySelectorNotNull(modal.node, '#dictionary-group-name-input');
+        /** @type {HTMLElement} */
+        const errorNode = querySelectorNotNull(modal.node, '#dictionary-group-name-error');
+
+        const oldName = modal.node.dataset.groupName ?? null;
+        const newName = input.value.trim();
+        const options = await this._settingsController.getOptions();
+        const groups = normalizeDictionaryGroups(options.dictionaryGroups);
+
+        const error = this._validateGroupName(newName, groups, oldName);
+        if (error !== null) {
+            errorNode.textContent = error;
+            errorNode.hidden = false;
+            return;
+        }
+        modal.setVisible(false);
+
+        if (oldName === null) {
+            // New groups start at the top, where they are immediately visible.
+            groups.unshift({name: newName, collapsed: false});
+        } else {
+            const group = groups.find((g) => g.name === oldName);
+            if (typeof group === 'undefined' || oldName === newName) { return; }
+            group.name = newName;
+            for (const dictionary of options.dictionaries) {
+                if (dictionary.group === oldName) { dictionary.group = newName; }
+            }
+        }
+        await this._saveDictionaryLayout(options, groups);
+    }
+
+    /** */
+    _onSetGroupSelectChange() {
+        /** @type {?HTMLSelectElement} */
+        const select = document.querySelector('#dictionary-set-group-select');
+        /** @type {?HTMLElement} */
+        const newContainer = document.querySelector('#dictionary-set-group-new-container');
+        if (select === null || newContainer === null) { return; }
+        const option = select.selectedOptions.item(0);
+        newContainer.hidden = !(option !== null && option.dataset.kind === 'new');
+    }
+
+    /** */
+    async _onSetGroupConfirm() {
+        const modal = this._modalController.getModal('dictionary-set-group');
+        if (modal === null) { return; }
+        /** @type {HTMLSelectElement} */
+        const select = querySelectorNotNull(modal.node, '#dictionary-set-group-select');
+        /** @type {HTMLInputElement} */
+        const newInput = querySelectorNotNull(modal.node, '#dictionary-set-group-new-input');
+        /** @type {HTMLElement} */
+        const errorNode = querySelectorNotNull(modal.node, '#dictionary-set-group-error');
+
+        const index = Number.parseInt(modal.node.dataset.index ?? '', 10);
+        const selectedOption = select.selectedOptions.item(0);
+        if (Number.isNaN(index) || selectedOption === null) { return; }
+
+        const options = await this._settingsController.getOptions();
+        const {dictionaries} = options;
+        const groups = normalizeDictionaryGroups(options.dictionaryGroups);
+        if (index < 0 || index >= dictionaries.length) { return; }
+
+        let groupName = selectedOption.value;
+        if (selectedOption.dataset.kind === 'new') {
+            groupName = newInput.value.trim();
+            const error = this._validateGroupName(groupName, groups, null);
+            if (error !== null) {
+                errorNode.textContent = error;
+                errorNode.hidden = false;
+                return;
+            }
+            groups.unshift({name: groupName, collapsed: false});
+        }
+        modal.setVisible(false);
+
+        const item = dictionaries[index];
+        if (item.group === groupName) { return; }
+        // Append to the end of the target group.
+        dictionaries.splice(index, 1);
+        item.group = groupName;
+        dictionaries.push(item);
+        await this._saveDictionaryLayout(options, groups);
+    }
+
+    // Drag and drop
+
+    /**
+     * @param {EventTarget|null} target
+     * @returns {?HTMLElement}
+     */
+    _getDragNode(target) {
+        if (!(target instanceof Element)) { return null; }
+        const node = /** @type {?HTMLElement} */ (target.closest('.dictionary-row, .dictionary-group-header'));
+        return (node !== null && node.parentNode === this._dictionaryEntryContainer ? node : null);
+    }
+
+    /**
+     * @param {DragEvent} e
+     */
+    _onDragStart(e) {
+        const node = this._getDragNode(e.target);
+        if (node === null || e.dataTransfer === null) { return; }
+        if (node.classList.contains('dictionary-row')) {
+            const index = Number.parseInt(node.dataset.index ?? '', 10);
+            if (Number.isNaN(index)) { return; }
+            this._dragState = {type: 'dictionary', index, node};
+        } else {
+            this._dragState = {type: 'group', name: node.dataset.groupName ?? UNGROUPED_NAME, node};
+        }
+        e.dataTransfer.effectAllowed = 'move';
+        // Firefox requires data to be set for the drag to start.
+        e.dataTransfer.setData('text/plain', '');
+        // Deferred so that the drag image is captured before the node is dimmed.
+        setTimeout(() => {
+            if (this._dragState !== null && this._dragState.node === node) { node.dataset.dragSource = 'true'; }
+        }, 0);
+    }
+
+    /**
+     * @param {DragEvent} e
+     * @returns {?{node: HTMLElement, position: 'before'|'after'|'into'}}
+     */
+    _getDropTarget(e) {
+        const state = this._dragState;
+        const node = this._getDragNode(e.target);
+        if (state === null || node === null || node === state.node) { return null; }
+        const isHeader = node.classList.contains('dictionary-group-header');
+        if (state.type === 'dictionary') {
+            if (isHeader) { return {node, position: 'into'}; }
+            const rect = node.getBoundingClientRect();
+            return {node, position: (e.clientY < rect.top + rect.height / 2 ? 'before' : 'after')};
+        }
+        // Dragging a group: any row of another group stands for that group.
+        const targetName = node.dataset.groupName ?? UNGROUPED_NAME;
+        if (targetName === state.name) { return null; }
+        const header = this._groupHeaders.find(({name}) => name === targetName);
+        return (typeof header !== 'undefined' ? {node: header.node, position: 'into'} : null);
+    }
+
+    /**
+     * @param {?{node: HTMLElement, position: 'before'|'after'|'into'}} dropTarget
+     */
+    _setDropIndicator(dropTarget) {
+        const previous = this._dropIndicatorNode;
+        if (previous !== null && (dropTarget === null || dropTarget.node !== previous)) {
+            delete previous.dataset.dropPosition;
+        }
+        this._dropIndicatorNode = (dropTarget !== null ? dropTarget.node : null);
+        if (dropTarget !== null) {
+            dropTarget.node.dataset.dropPosition = dropTarget.position;
+        }
+    }
+
+    /**
+     * @param {DragEvent} e
+     */
+    _onDragOver(e) {
+        if (this._dragState === null) { return; }
+        const dropTarget = this._getDropTarget(e);
+        this._setDropIndicator(dropTarget);
+        if (dropTarget === null) { return; }
+        e.preventDefault();
+        if (e.dataTransfer !== null) { e.dataTransfer.dropEffect = 'move'; }
+    }
+
+    /**
+     * @param {DragEvent} e
+     */
+    _onDragLeave(e) {
+        const {relatedTarget} = e;
+        if (relatedTarget instanceof Node && this._dictionaryEntryContainer.contains(relatedTarget)) { return; }
+        this._setDropIndicator(null);
+    }
+
+    /**
+     * @param {DragEvent} e
+     */
+    _onDrop(e) {
+        const state = this._dragState;
+        if (state === null) { return; }
+        const dropTarget = this._getDropTarget(e);
+        this._endDrag();
+        if (dropTarget === null) { return; }
+        e.preventDefault();
+
+        const {node, position} = dropTarget;
+        const targetGroupName = node.dataset.groupName ?? UNGROUPED_NAME;
+        if (state.type === 'group') {
+            void this._moveGroupToGroup(state.name, targetGroupName);
+        } else if (position === 'into') {
+            void this._dropDictionaryIntoGroup(state.index, targetGroupName);
+        } else {
+            const targetIndex = Number.parseInt(node.dataset.index ?? '', 10);
+            if (Number.isNaN(targetIndex)) { return; }
+            void this._dropDictionaryNextTo(state.index, targetIndex, position);
+        }
+    }
+
+    /** */
+    _onDragEnd() {
+        this._endDrag();
+    }
+
+    /** */
+    _endDrag() {
+        if (this._dragState !== null) {
+            delete this._dragState.node.dataset.dragSource;
+            this._dragState = null;
+        }
+        this._setDropIndicator(null);
+    }
+
+    /**
+     * @param {string} name
+     * @param {string} targetName The group whose position the moved group takes.
+     */
+    async _moveGroupToGroup(name, targetName) {
+        const options = await this._settingsController.getOptions();
+        const groups = normalizeDictionaryGroups(options.dictionaryGroups);
+        const targetIndex = groups.findIndex((g) => g.name === targetName);
+        if (targetIndex < 0) { return; }
+        await this._moveGroup(name, targetIndex);
+    }
+
+    /**
+     * Moves a dictionary to the top of a group.
+     * @param {number} index
+     * @param {string} groupName
+     */
+    async _dropDictionaryIntoGroup(index, groupName) {
+        const options = await this._settingsController.getOptions();
+        const {dictionaries} = options;
+        const groups = normalizeDictionaryGroups(options.dictionaryGroups);
+        if (index < 0 || index >= dictionaries.length || !groups.some((g) => g.name === groupName)) { return; }
+        const item = dictionaries.splice(index, 1)[0];
+        item.group = groupName;
+        // Sorting by group keeps relative order, so the front of the array is the front of the group.
+        dictionaries.unshift(item);
+        await this._saveDictionaryLayout(options, groups);
+    }
+
+    /**
+     * Moves a dictionary directly before or after another one, joining that dictionary's group.
+     * @param {number} index
+     * @param {number} targetIndex
+     * @param {'before'|'after'} position
+     */
+    async _dropDictionaryNextTo(index, targetIndex, position) {
+        const options = await this._settingsController.getOptions();
+        const {dictionaries} = options;
+        if (
+            index < 0 || index >= dictionaries.length ||
+            targetIndex < 0 || targetIndex >= dictionaries.length ||
+            index === targetIndex
+        ) {
+            return;
+        }
+        const target = dictionaries[targetIndex];
+        const item = dictionaries.splice(index, 1)[0];
+        item.group = target.group;
+        const insertIndex = dictionaries.indexOf(target) + (position === 'after' ? 1 : 0);
+        dictionaries.splice(insertIndex, 0, item);
+        await this._saveDictionaryLayout(options, options.dictionaryGroups);
     }
 }

@@ -96,6 +96,7 @@ export type ProfileOptions = {
     scanning: ScanningOptions;
     translation: TranslationOptions;
     dictionaries: DictionariesOptions;
+    dictionaryGroups: DictionaryGroupOptions[];
     parsing: ParsingOptions;
     anki: AnkiOptions;
     sentenceParsing: SentenceParsingOptions;
@@ -286,7 +287,15 @@ export type DictionaryOptions = {
     definitionsCollapsible: DictionaryDefinitionsCollapsible;
     partsOfSpeechFilter: boolean;
     useDeinflections: boolean;
+    /** The name of the group this dictionary is organized under in the settings; empty for ungrouped. */
+    group: string;
     styles?: string;
+};
+
+export type DictionaryGroupOptions = {
+    /** The unique name of the group. The empty string refers to the implicit ungrouped group. */
+    name: string;
+    collapsed: boolean;
 };
 
 export type ParsingOptions = {

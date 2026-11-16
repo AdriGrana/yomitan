@@ -69,6 +69,7 @@
                             "scanning",
                             "translation",
                             "dictionaries",
+                            "dictionaryGroups",
                             "parsing",
                             "anki",
                             "sentenceParsing",
@@ -920,7 +921,8 @@
                                         "allowSecondarySearches",
                                         "definitionsCollapsible",
                                         "partsOfSpeechFilter",
-                                        "useDeinflections"
+                                        "useDeinflections",
+                                        "group"
                                     ],
                                     "properties": {
                                         "name": {
@@ -951,6 +953,31 @@
                                         "useDeinflections": {
                                             "type": "boolean",
                                             "default": true
+                                        },
+                                        "group": {
+                                            "type": "string",
+                                            "default": ""
+                                        }
+                                    }
+                                }
+                            },
+                            "dictionaryGroups": {
+                                "type": "array",
+                                "default": [],
+                                "items": {
+                                    "type": "object",
+                                    "required": [
+                                        "name",
+                                        "collapsed"
+                                    ],
+                                    "properties": {
+                                        "name": {
+                                            "type": "string",
+                                            "default": ""
+                                        },
+                                        "collapsed": {
+                                            "type": "boolean",
+                                            "default": false
                                         }
                                     }
                                 }

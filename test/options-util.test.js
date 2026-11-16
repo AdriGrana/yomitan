@@ -481,6 +481,7 @@ function createProfileOptionsUpdatedTestData1() {
                 definitionsCollapsible: 'not-collapsible',
                 partsOfSpeechFilter: true,
                 useDeinflections: true,
+                group: '',
             },
             {
                 name: 'Test Dictionary 1',
@@ -490,6 +491,7 @@ function createProfileOptionsUpdatedTestData1() {
                 definitionsCollapsible: 'not-collapsible',
                 partsOfSpeechFilter: true,
                 useDeinflections: true,
+                group: '',
             },
             {
                 name: 'Test Dictionary 3',
@@ -499,8 +501,10 @@ function createProfileOptionsUpdatedTestData1() {
                 definitionsCollapsible: 'not-collapsible',
                 partsOfSpeechFilter: true,
                 useDeinflections: true,
+                group: '',
             },
         ],
+        dictionaryGroups: [],
         parsing: {
             enableScanningParser: true,
             enableMecabParser: false,

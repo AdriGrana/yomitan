@@ -69,6 +69,7 @@
             <button type="button" class="low-emphasis danger dictionary-database-mutating-input" id="dictionary-delete-all-button">Delete All</button>
             <button type="button" class="low-emphasis dictionary-database-mutating-input advanced-only" id="dictionary-check-integrity">Check Integrity</button>
             <button type="button" class="low-emphasis dictionary-database-mutating-input" id="dictionary-check-updates">Check for Updates</button>
+            <button type="button" class="low-emphasis" id="dictionary-add-group-button">Add Group</button>
             <button type="button" class="low-emphasis dictionary-database-mutating-input" id="dictionary-import-button">Import</button>
             <button type="button" data-modal-action="hide">Close</button>
         </div>
@@ -271,6 +272,39 @@
         <div class="modal-footer">
             <button type="button" class="low-emphasis" data-modal-action="hide">Cancel</button>
             <button type="button" data-modal-action="hide" id="dictionary-move-button">Move</button>
+        </div>
+    </div></div>
+
+    <div id="dictionary-group-name-modal" class="modal" tabindex="-1" role="dialog" hidden><div class="modal-content modal-content-small">
+        <div class="modal-header"><div class="modal-title" id="dictionary-group-name-modal-title">Add Dictionary Group</div></div>
+        <div class="modal-body">
+            <p>Groups keep related dictionaries together. Moving a group changes the priority of all of its dictionaries at once.</p>
+            <div class="margin-above">
+                <input type="text" id="dictionary-group-name-input" placeholder="Group name" autocomplete="off">
+            </div>
+            <div id="dictionary-group-name-error" class="danger-text margin-above" hidden></div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="low-emphasis" data-modal-action="hide">Cancel</button>
+            <button type="button" id="dictionary-group-name-button">Save</button>
+        </div>
+    </div></div>
+
+    <div id="dictionary-set-group-modal" class="modal" tabindex="-1" role="dialog" hidden><div class="modal-content modal-content-small">
+        <div class="modal-header"><div class="modal-title">Move to Group</div></div>
+        <div class="modal-body">
+            <p>Select the group the dictionary <strong class="dictionary-title"></strong> should be moved to:</p>
+            <div class="margin-above">
+                <select id="dictionary-set-group-select"></select>
+            </div>
+            <div class="margin-above" id="dictionary-set-group-new-container" hidden>
+                <input type="text" id="dictionary-set-group-new-input" placeholder="New group name" autocomplete="off">
+            </div>
+            <div id="dictionary-set-group-error" class="danger-text margin-above" hidden></div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="low-emphasis" data-modal-action="hide">Cancel</button>
+            <button type="button" id="dictionary-set-group-button">Move</button>
         </div>
     </div></div>
 
