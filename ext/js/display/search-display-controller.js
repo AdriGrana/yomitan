@@ -20,6 +20,7 @@ import {ClipboardMonitor} from '../comm/clipboard-monitor.js';
 import {createApiMap, invokeApiMapHandler} from '../core/api-map.js';
 import {EventListenerCollection} from '../core/event-listener-collection.js';
 import {querySelectorNotNull} from '../dom/query-selector.js';
+import {getSearchTabFrameElement, getSearchTabKeyAction, SEARCH_TAB_COMMAND, SEARCH_TAB_EVENT} from './search-tab-util.js';
 import {isComposing} from '../language/ime-utilities.js';
 import {convertToKana, convertToKanaIME} from '../language/ja/japanese-wanakana.js';
 
@@ -76,6 +77,20 @@ export class SearchDisplayController {
         };
         /** @type {ClipboardMonitor} */
         this._clipboardMonitor = new ClipboardMonitor(this._clipboardReaderLike);
+        /**
+         * The iframe element hosting this page when it is a tab of the tabbed search page, otherwise `null`.
+         * @type {?HTMLIFrameElement}
+         */
+        this._tabFrameElement = getSearchTabFrameElement();
+        /** @type {boolean} */
+        this._tabActive = true;
+        /**
+         * The profile used by this tab, or `null` to use the default profile.
+         * @type {?number}
+         */
+        this._tabProfileIndex = null;
+        /** @type {boolean} */
+        this._tabClipboardMonitorInitialized = false;
         /** @type {import('application').ApiMap} */
         this._apiMap = createApiMap([
             ['searchDisplayControllerGetMode', this._onMessageGetMode.bind(this)],
@@ -87,6 +102,10 @@ export class SearchDisplayController {
 
     /** */
     async prepare() {
+        if (this._tabFrameElement !== null) {
+            await this._prepareTab(this._tabFrameElement);
+        }
+
         await this._display.updateOptions();
 
         this._searchPersistentStateController.on('modeChange', this._onModeChange.bind(this));
@@ -105,7 +124,8 @@ export class SearchDisplayController {
 
         this._displayAudio.autoPlayAudioDelay = 0;
         this._display.queryParserVisible = true;
-        this._display.setHistorySettings({useBrowserHistory: true});
+        // Tabs keep their history to themselves; otherwise every tab would add to the history of the hosting page.
+        this._display.setHistorySettings({useBrowserHistory: this._tabFrameElement === null});
 
         this._searchButton.addEventListener('click', this._onSearch.bind(this), false);
         this._clearButton.addEventListener('click', this._onClear.bind(this), false);
@@ -124,6 +144,11 @@ export class SearchDisplayController {
         const displayOptions = this._display.getOptions();
         if (displayOptions !== null) {
             await this._onDisplayOptionsUpdated({options: displayOptions});
+        }
+
+        if (this._tabFrameElement !== null) {
+            await this._sendTabProfileEvent();
+            this._sendTabEvent({type: 'ready'});
         }
     }
 
@@ -196,7 +221,11 @@ export class SearchDisplayController {
      * @param {import('display').EventArgument<'optionsUpdated'>} details
      */
     async _onDisplayOptionsUpdated({options}) {
-        this._clipboardMonitorEnabled = options.clipboard.enableSearchPageMonitor;
+        // A tab only takes the saved setting as its starting value, so that tabs can be toggled independently.
+        if (this._tabFrameElement === null || !this._tabClipboardMonitorInitialized) {
+            this._clipboardMonitorEnabled = options.clipboard.enableSearchPageMonitor;
+            this._tabClipboardMonitorInitialized = true;
+        }
         this._updateClipboardMonitorEnabled();
         this._updateSearchSettings(options);
         this._queryInput.lang = options.general.language;
@@ -249,6 +278,8 @@ export class SearchDisplayController {
             this._updateSearchHeight(true);
         }
         this._setIntroVisible(!valid, animate);
+
+        this._sendTabEvent({type: 'query', query: valid ? query.trim() : ''});
     }
 
     /**
@@ -443,6 +474,12 @@ export class SearchDisplayController {
         const node = /** @type {HTMLInputElement} */ (event.currentTarget);
         const value = Number.parseInt(node.value, 10);
         const optionsFull = await this._display.application.api.optionsGetFull();
+        if (this._tabFrameElement !== null) {
+            // In a tab, the profile is only changed for that tab.
+            const index = (Number.isFinite(value) && value >= 0 && value < optionsFull.profiles.length ? value : null);
+            await this._setTabProfile(index);
+            return;
+        }
         if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= optionsFull.profiles.length) {
             await this._setDefaultProfileIndex(value);
         }
@@ -575,7 +612,8 @@ export class SearchDisplayController {
     _updateClipboardMonitorEnabled() {
         const enabled = this._clipboardMonitorEnabled;
         this._clipboardMonitorEnableCheckbox.checked = enabled;
-        if (enabled && this._canEnableClipboardMonitor()) {
+        // Only the visible tab reacts to the clipboard.
+        if (enabled && this._tabActive && this._canEnableClipboardMonitor()) {
             this._clipboardMonitor.start();
         } else {
             this._clipboardMonitor.stop();
@@ -624,7 +662,7 @@ export class SearchDisplayController {
         const url = window.location.href;
         const documentTitle = document.title;
         /** @type {import('settings').OptionsContext} */
-        const optionsContext = {depth, url};
+        const optionsContext = (this._tabProfileIndex !== null ? {index: this._tabProfileIndex} : {depth, url});
         if (flags !== null) {
             optionsContext.flags = flags;
         }
@@ -712,6 +750,19 @@ export class SearchDisplayController {
         this._profileSelectContainer.hidden = profiles.length <= 1;
 
         const fragment = document.createDocumentFragment();
+        const isTab = (this._tabFrameElement !== null);
+        if (isTab) {
+            if (this._tabProfileIndex !== null && this._tabProfileIndex >= profiles.length) {
+                // The profile was deleted.
+                await this._setTabProfile(null);
+                return;
+            }
+            /** @type {HTMLOptGroupElement} */ (optionGroup).label = 'Profile of this tab';
+            const option = document.createElement('option');
+            option.textContent = `Default (${profiles[profileCurrent]?.name ?? ''})`;
+            option.value = '-1';
+            fragment.appendChild(option);
+        }
         for (let i = 0, ii = profiles.length; i < ii; ++i) {
             const {name} = profiles[i];
             const option = document.createElement('option');
@@ -721,6 +772,170 @@ export class SearchDisplayController {
         }
         optionGroup.textContent = '';
         optionGroup.appendChild(fragment);
-        this._profileSelect.value = `${profileCurrent}`;
+        this._profileSelect.value = (isTab ? `${this._tabProfileIndex ?? -1}` : `${profileCurrent}`);
+    }
+
+    // Tabs
+
+    /**
+     * Sets up this page as one tab of the tabbed search page.
+     * @param {HTMLIFrameElement} frameElement
+     */
+    async _prepareTab(frameElement) {
+        const {active, profile, mode} = frameElement.dataset;
+        this._tabActive = (active === 'true');
+        if (mode === 'popup' || mode === 'action-popup') {
+            this._searchPersistentStateController.mode = mode;
+        }
+
+        const profileIndex = Number.parseInt(profile ?? '', 10);
+        if (Number.isInteger(profileIndex) && profileIndex >= 0) {
+            const {profiles} = await this._display.application.api.optionsGetFull();
+            if (profileIndex < profiles.length) {
+                this._tabProfileIndex = profileIndex;
+                await this._display.setOptionsContext({index: profileIndex});
+            }
+        }
+
+        window.addEventListener(SEARCH_TAB_COMMAND, this._onTabCommand.bind(this), false);
+        window.addEventListener('keydown', this._onTabKeyDown.bind(this), true);
+        window.addEventListener('click', this._onTabLinkClick.bind(this), true);
+        window.addEventListener('auxclick', this._onTabLinkClick.bind(this), true);
+        window.addEventListener('mousedown', this._onTabLinkMouseDown.bind(this), true);
+    }
+
+    /**
+     * @param {import('search-tabs').TabEvent} detail
+     */
+    _sendTabEvent(detail) {
+        if (this._tabFrameElement === null) { return; }
+        this._tabFrameElement.dispatchEvent(new CustomEvent(SEARCH_TAB_EVENT, {detail}));
+    }
+
+    /** */
+    async _sendTabProfileEvent() {
+        const index = this._tabProfileIndex;
+        let name = null;
+        if (index !== null) {
+            const {profiles} = await this._display.application.api.optionsGetFull();
+            name = profiles[index]?.name ?? null;
+        }
+        this._sendTabEvent({type: 'profile', index, name});
+    }
+
+    /**
+     * @param {?number} index
+     */
+    async _setTabProfile(index) {
+        this._tabProfileIndex = index;
+        // The new profile's clipboard monitor setting becomes the tab's starting value.
+        this._tabClipboardMonitorInitialized = false;
+        await this._display.setOptionsContext(index !== null ? {index} : {depth: this._display.depth, url: window.location.href});
+        await this._sendTabProfileEvent();
+        if (this._queryInput.value.trim().length > 0) {
+            this._search(false, 'overwrite', true, null);
+        }
+    }
+
+    /**
+     * @param {Event} e
+     */
+    _onTabCommand(e) {
+        const command = /** @type {CustomEvent<import('search-tabs').TabCommand>} */ (e).detail;
+        switch (command.type) {
+            case 'setActive':
+                if (this._tabActive === command.active) { return; }
+                this._tabActive = command.active;
+                this._updateClipboardMonitorEnabled();
+                break;
+            case 'setMode':
+                this.setMode(command.mode);
+                break;
+            case 'updateSearchQuery':
+                void this._updateSearchFromClipboard(command.text, command.animate, false);
+                break;
+            case 'selectSearch':
+                this._onExternalSearchSelect();
+                break;
+        }
+    }
+
+    /**
+     * @param {KeyboardEvent} e
+     */
+    _onTabKeyDown(e) {
+        const action = getSearchTabKeyAction(e);
+        if (action === null) { return; }
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        switch (action) {
+            case 'newTab':
+                {
+                    // With text selected, the new tab searches for it right away.
+                    const selection = window.getSelection();
+                    const query = (selection !== null ? selection.toString().trim() : '');
+                    this._sendTabEvent(query.length > 0 ? {type: 'openTab', query, background: false} : {type: 'newTab'});
+                }
+                break;
+            case 'closeTab':
+                this._sendTabEvent({type: 'closeTab'});
+                break;
+            case 'nextTab':
+                this._sendTabEvent({type: 'switchTab', offset: 1});
+                break;
+            case 'previousTab':
+                this._sendTabEvent({type: 'switchTab', offset: -1});
+                break;
+        }
+    }
+
+    /**
+     * Gets the search query of a link which leads to another search, if the event is on such a link.
+     * @param {MouseEvent} e
+     * @returns {?string}
+     */
+    _getTabLinkQuery(e) {
+        const {target} = e;
+        if (!(target instanceof Element)) { return null; }
+        const link = target.closest('a');
+        if (link === null) { return null; }
+        if (link.classList.contains('headword-kanji-link')) {
+            const text = (link.textContent ?? '').trim();
+            return text.length > 0 ? text : null;
+        }
+        const href = link.getAttribute('href');
+        if (href === null) { return null; }
+        try {
+            const url = new URL(href, window.location.href);
+            if (url.origin !== window.location.origin || url.pathname !== window.location.pathname) { return null; }
+            const query = url.searchParams.get('query');
+            return (query !== null && query.length > 0 ? query : null);
+        } catch (error) {
+            return null;
+        }
+    }
+
+    /**
+     * Ctrl+click or middle click on a link to another search opens it in a new tab.
+     * @param {MouseEvent} e
+     */
+    _onTabLinkClick(e) {
+        const isMiddleClick = (e.type === 'auxclick' && e.button === 1);
+        const isModifiedClick = (e.type === 'click' && e.button === 0 && (e.ctrlKey || e.metaKey));
+        if (!isMiddleClick && !isModifiedClick) { return; }
+        const query = this._getTabLinkQuery(e);
+        if (query === null) { return; }
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        this._sendTabEvent({type: 'openTab', query, background: !e.shiftKey});
+    }
+
+    /**
+     * Prevents the middle mouse button from starting autoscroll on links which open in a new tab.
+     * @param {MouseEvent} e
+     */
+    _onTabLinkMouseDown(e) {
+        if (e.button !== 1 || this._getTabLinkQuery(e) === null) { return; }
+        e.preventDefault();
     }
 }

@@ -21,6 +21,19 @@
 </head>
 <body hidden>
 
+<div id="search-tabs" hidden>
+    <div id="search-tab-bar">
+        <div id="search-tab-list" role="tablist"></div>
+        <button type="button" id="search-tab-add" title="New tab (Alt+T)"><span class="icon" data-icon="plus-thick"></span></button>
+    </div>
+    <div id="search-tab-frames"></div>
+    <template id="search-tab-template"><div class="search-tab" role="tab" tabindex="0" data-active="false">
+        <span class="search-tab-profile" hidden></span>
+        <span class="search-tab-title"></span>
+        <button type="button" class="search-tab-close" title="Close tab (Alt+W)" tabindex="-1"><span class="icon" data-icon="cross"></span></button>
+    </div></template>
+</div>
+
 <div class="content-outer">
     <div class="content">
         <div class="content-scroll scrollbar" id="content-scroll">

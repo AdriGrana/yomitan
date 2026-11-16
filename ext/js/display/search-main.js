@@ -28,8 +28,17 @@ import {Display} from './display.js';
 import {SearchActionPopupController} from './search-action-popup-controller.js';
 import {SearchDisplayController} from './search-display-controller.js';
 import {SearchPersistentStateController} from './search-persistent-state-controller.js';
+import {isSearchTabShellPage} from './search-tab-util.js';
+import {SearchTabsShell} from './search-tabs-shell.js';
 
 await Application.main(true, async (application) => {
+    if (isSearchTabShellPage()) {
+        // The top-level page only hosts the tab bar; the searches themselves run in embedded copies of this page.
+        const searchTabsShell = new SearchTabsShell();
+        searchTabsShell.prepare();
+        return;
+    }
+
     const documentFocusController = new DocumentFocusController('#search-textbox');
     documentFocusController.prepare();
 

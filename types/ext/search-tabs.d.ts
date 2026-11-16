@@ -1,0 +1,49 @@
+/*
+ * Copyright (C) 2026  Yomitan Authors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+import type {SearchMode} from './display';
+
+/** Sent by a search tab (an embedded search page) to the tab shell which hosts it. */
+export type TabEvent = (
+    {type: 'ready'} |
+    {type: 'query', query: string} |
+    {type: 'profile', index: number | null, name: string | null} |
+    {type: 'openTab', query: string, background: boolean} |
+    {type: 'newTab'} |
+    {type: 'closeTab'} |
+    {type: 'switchTab', offset: number}
+);
+
+/** Sent by the tab shell to one of its search tabs. */
+export type TabCommand = (
+    {type: 'setActive', active: boolean} |
+    {type: 'setMode', mode: SearchMode} |
+    {type: 'updateSearchQuery', text: string, animate: boolean} |
+    {type: 'selectSearch'}
+);
+
+export type TabKeyAction = 'newTab' | 'closeTab' | 'nextTab' | 'previousTab';
+
+export type SavedTab = {
+    query: string;
+    profile: number | null;
+};
+
+export type SavedState = {
+    tabs: SavedTab[];
+    active: number;
+};
