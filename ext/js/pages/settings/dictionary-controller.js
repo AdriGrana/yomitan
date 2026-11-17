@@ -18,15 +18,18 @@
 
 import * as ajvSchemas0 from '../../../lib/validate-schemas.js';
 import {EventListenerCollection} from '../../core/event-listener-collection.js';
-import {readResponseJson} from '../../core/json.js';
+import {parseJson, readResponseJson} from '../../core/json.js';
 import {log} from '../../core/log.js';
 import {deferPromise} from '../../core/utilities.js';
 import {compareRevisions} from '../../dictionary/dictionary-data-util.js';
+import {getDisabledDictionaryGroups, isDictionaryEnabled} from '../../data/dictionary-group-util.js';
 import {DictionaryWorker} from '../../dictionary/dictionary-worker.js';
 import {querySelectorNotNull} from '../../dom/query-selector.js';
 import {normalizeDictionaryGroups, sortDictionariesByGroup, UNGROUPED_LABEL, UNGROUPED_NAME} from './dictionary-groups.js';
 
 const ajvSchemas = /** @type {import('dictionary-importer').CompiledSchemaValidators} */ (/** @type {unknown} */ (ajvSchemas0));
+
+const SELECTED_GROUP_TAB_KEY = 'yomitanDictionaryGroupTab';
 
 class DictionaryEntry {
     /**
@@ -693,6 +696,23 @@ export class DictionaryController {
         this._dragState = null;
         /** @type {?HTMLElement} */
         this._dropIndicatorNode = null;
+        /** @type {HTMLElement} */
+        this._groupTabsContainer = querySelectorNotNull(document, '#dictionary-group-tabs');
+        /** @type {HTMLElement} */
+        this._groupTabList = querySelectorNotNull(document, '#dictionary-group-tab-list');
+        /** @type {HTMLElement} */
+        this._groupEmptyNode = querySelectorNotNull(document, '#dictionary-group-empty');
+        /** @type {{name: ?string, node: HTMLElement, countNode: HTMLElement}[]} */
+        this._groupTabs = [];
+        /** @type {EventListenerCollection} */
+        this._groupTabEventListeners = new EventListenerCollection();
+        /**
+         * The group whose tab is selected, or `null` for the "All" tab.
+         * @type {?string}
+         */
+        this._selectedGroupTab = this._loadSelectedGroupTab();
+        /** @type {Map<string, boolean>} */
+        this._collapsedGroups = new Map();
     }
 
     /** @type {import('./modal-controller.js').ModalController} */
@@ -867,6 +887,8 @@ export class DictionaryController {
             dictionaries.splice(index, 1);
             dictionaries.splice(neighborIndex, 0, item);
         } else {
+            // On a group's tab the dictionary would vanish from view, so it stays inside its group.
+            if (this._selectedGroupTab !== null) { return; }
             const groupIndex = groups.findIndex(({name}) => name === item.group);
             const targetGroupIndex = groupIndex + offset;
             if (groupIndex < 0 || targetGroupIndex < 0 || targetGroupIndex >= groups.length) { return; }
@@ -1159,6 +1181,7 @@ export class DictionaryController {
         for (let i = 0, ii = groups.length; i < ii; ++i) {
             collapsedGroups.set(groups[i].name, groups[i].collapsed);
         }
+        this._collapsedGroups = collapsedGroups;
 
         let groupIndex = 0;
         const createHeadersUntil = (/** @type {number} */ endIndex) => {
@@ -1178,14 +1201,16 @@ export class DictionaryController {
             if (typeof dictionaryInfo === 'undefined') { continue; }
             const updateDownloadUrl = dictionaryUpdateDownloadUrlMap.get(name) ?? null;
             const dictionaryDatabaseCounts = dictionaryDatabaseCountsMap.get(name) ?? null;
-            const hidden = (collapsedGroups.get(group) === true);
-            const entry = this._createDictionaryEntry(i, dictionaryInfo, updateDownloadUrl, dictionaryDatabaseCounts, group, hidden);
+            // Visibility is applied afterwards by _applyGroupView.
+            const entry = this._createDictionaryEntry(i, dictionaryInfo, updateDownloadUrl, dictionaryDatabaseCounts, group, false);
             entry.setFallbackOnly(dictionaryOptionsArray[i].fallbackOnly === true);
         }
         createHeadersUntil(groups.length);
 
+        this._renderGroupTabs(groups);
         this._updateDictionaryEntryCount();
         this._updateGroupHeaders(options);
+        this._applyGroupView();
     }
 
     /**
@@ -1198,11 +1223,11 @@ export class DictionaryController {
         const dictionaryCount = dictionaries.length;
         if (this._dictionaries !== null) {
             const enabledDictionaries = new Set();
-            for (const {name, enabled} of dictionaries) {
-                if (enabled) {
-                    ++enabledDictionaryCount;
-                    enabledDictionaries.add(name);
-                }
+            // Dictionaries in a group which is switched off don't count as enabled.
+            const disabledGroups = getDisabledDictionaryGroups(options.dictionaryGroups);
+            for (const dictionary of dictionaries) {
+                if (dictionary.enabled) { ++enabledDictionaryCount; }
+                if (isDictionaryEnabled(dictionary, disabledGroups)) { enabledDictionaries.add(dictionary.name); }
             }
 
             for (const {title} of this._dictionaries) {
@@ -1685,6 +1710,14 @@ export class DictionaryController {
                 value,
             });
         }
+        if (value) {
+            const {dictionaryGroups} = options;
+            for (let i = 0, ii = dictionaryGroups.length; i < ii; ++i) {
+                if (dictionaryGroups[i].enabled === false) {
+                    targets.push({action: 'set', path: `dictionaryGroups[${i}].enabled`, value: true});
+                }
+            }
+        }
         await this._settingsController.modifyProfileSettings(targets);
 
         await this.updateDictionariesEnabled();
@@ -1725,12 +1758,127 @@ export class DictionaryController {
             }, false);
         }
 
+        for (const container of [this._dictionaryEntryContainer, this._groupTabList]) {
+            container.addEventListener('dragstart', this._onDragStart.bind(this), false);
+            container.addEventListener('dragover', this._onDragOver.bind(this), false);
+            container.addEventListener('dragleave', this._onDragLeave.bind(this), false);
+            container.addEventListener('drop', this._onDrop.bind(this), false);
+            container.addEventListener('dragend', this._onDragEnd.bind(this), false);
+        }
+    }
+
+    // Group tabs
+
+    /**
+     * @returns {?string}
+     */
+    _loadSelectedGroupTab() {
+        try {
+            const value = localStorage.getItem(SELECTED_GROUP_TAB_KEY);
+            if (value === null) { return null; }
+            /** @type {unknown} */
+            const name = parseJson(value);
+            return (typeof name === 'string' ? name : null);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
+     * @param {?string} name The group to show, or `null` for the "All" tab.
+     */
+    _setSelectedGroupTab(name) {
+        this._selectedGroupTab = name;
+        try {
+            localStorage.setItem(SELECTED_GROUP_TAB_KEY, JSON.stringify(name));
+        } catch (e) {
+            // NOP
+        }
+    }
+
+    /**
+     * @param {?string} name
+     */
+    _selectGroupTab(name) {
+        if (name === this._selectedGroupTab) { return; }
+        this._setSelectedGroupTab(name);
+        this._applyGroupView();
+    }
+
+    /**
+     * Creates the "All" tab and one tab per group, in priority order.
+     * @param {import('settings').DictionaryGroupOptions[]} groups Normalized groups.
+     */
+    _renderGroupTabs(groups) {
+        this._groupTabEventListeners.removeAllEventListeners();
+        this._groupTabList.textContent = '';
+        this._groupTabs = [];
+        this._groupTabsContainer.hidden = (this._dictionaryEntries.length === 0);
+
+        if (this._selectedGroupTab !== null && !groups.some(({name}) => name === this._selectedGroupTab)) {
+            this._setSelectedGroupTab(null);
+        }
+
+        for (const group of [null, ...groups]) {
+            const name = (group !== null ? group.name : null);
+            const node = document.createElement('div');
+            node.className = 'dictionary-group-tab';
+            node.setAttribute('role', 'tab');
+            node.tabIndex = 0;
+            const labelNode = document.createElement('span');
+            labelNode.className = 'dictionary-group-tab-label';
+            const countNode = document.createElement('span');
+            countNode.className = 'dictionary-group-tab-count';
+            node.appendChild(labelNode);
+            node.appendChild(countNode);
+            if (name === null) {
+                labelNode.textContent = 'All';
+                node.dataset.all = 'true';
+            } else {
+                labelNode.textContent = (name === UNGROUPED_NAME ? UNGROUPED_LABEL : name);
+                node.dataset.groupName = name;
+                node.dataset.ungrouped = `${name === UNGROUPED_NAME}`;
+                // Dragging tabs changes the priority of whole groups.
+                node.draggable = true;
+            }
+            this._groupTabEventListeners.addEventListener(node, 'click', () => { this._selectGroupTab(name); }, false);
+            this._groupTabEventListeners.addEventListener(node, 'keydown', (/** @type {KeyboardEvent} */ e) => {
+                if (e.key !== 'Enter' && e.key !== ' ') { return; }
+                e.preventDefault();
+                this._selectGroupTab(name);
+            }, false);
+            this._groupTabList.appendChild(node);
+            this._groupTabs.push({name, node, countNode});
+        }
+    }
+
+    /**
+     * Shows the dictionaries of the selected tab: everything (grouped, with collapsing) for "All",
+     * otherwise only the selected group.
+     */
+    _applyGroupView() {
+        const tab = (this._groupHeaders.length > 0 ? this._selectedGroupTab : null);
         const container = this._dictionaryEntryContainer;
-        container.addEventListener('dragstart', this._onDragStart.bind(this), false);
-        container.addEventListener('dragover', this._onDragOver.bind(this), false);
-        container.addEventListener('dragleave', this._onDragLeave.bind(this), false);
-        container.addEventListener('drop', this._onDrop.bind(this), false);
-        container.addEventListener('dragend', this._onDragEnd.bind(this), false);
+        container.dataset.groupView = (tab === null ? 'all' : 'group');
+        let groupDictionaryCount = 0;
+        for (const row of /** @type {NodeListOf<HTMLElement>} */ (container.querySelectorAll(':scope > .dictionary-row'))) {
+            const group = row.dataset.groupName ?? UNGROUPED_NAME;
+            if (tab === null) {
+                row.hidden = (this._collapsedGroups.get(group) === true);
+            } else {
+                row.hidden = (group !== tab);
+                if (group === tab) { ++groupDictionaryCount; }
+            }
+        }
+        for (const {name, node} of this._groupHeaders) {
+            node.hidden = (tab !== null && name !== tab);
+        }
+        for (const {name, node} of this._groupTabs) {
+            const active = (name === tab);
+            node.dataset.active = `${active}`;
+            node.setAttribute('aria-selected', `${active}`);
+        }
+        this._groupEmptyNode.hidden = !(tab !== null && groupDictionaryCount === 0);
     }
 
     /**
@@ -1811,6 +1959,10 @@ export class DictionaryController {
 
         const listeners = this._groupHeaderEventListeners;
         listeners.addEventListener(collapseButton, 'click', () => { void this._setGroupCollapsed(name, !collapsed); }, false);
+        nameNode.title = 'Show only this group';
+        listeners.addEventListener(nameNode, 'click', () => {
+            if (this._selectedGroupTab === null) { this._selectGroupTab(name); }
+        }, false);
         listeners.addEventListener(checkbox, 'change', () => { void this._setGroupEnabled(name, checkbox.checked); }, false);
         listeners.addEventListener(upButton, 'click', () => { void this._moveGroup(name, groupIndex - 1); }, false);
         listeners.addEventListener(downButton, 'click', () => { void this._moveGroup(name, groupIndex + 1); }, false);
@@ -1833,8 +1985,8 @@ export class DictionaryController {
                 case 'rename': this._showGroupNameModal(name); break;
                 case 'moveToTop': void this._moveGroup(name, 0); break;
                 case 'moveToBottom': void this._moveGroup(name, groupCount - 1); break;
-                case 'enableAll': void this._setGroupEnabled(name, true); break;
-                case 'disableAll': void this._setGroupEnabled(name, false); break;
+                case 'enableAll': void this._setGroupDictionariesEnabled(name, true); break;
+                case 'disableAll': void this._setGroupDictionariesEnabled(name, false); break;
                 case 'delete': void this._deleteGroup(name); break;
             }
         }, false);
@@ -1849,17 +2001,53 @@ export class DictionaryController {
      * @param {import('settings').ProfileOptions} options
      */
     _updateGroupHeaders(options) {
-        for (const {name, checkbox, countNode} of this._groupHeaders) {
-            let count = 0;
-            let enabledCount = 0;
-            for (const {group, enabled} of options.dictionaries) {
-                if (group !== name) { continue; }
-                ++count;
-                if (enabled) { ++enabledCount; }
+        const disabledGroups = getDisabledDictionaryGroups(options.dictionaryGroups);
+        /** @type {Map<string, {count: number, enabledCount: number}>} */
+        const stats = new Map();
+        let totalCount = 0;
+        let activeCount = 0;
+        for (const dictionary of options.dictionaries) {
+            const group = (typeof dictionary.group === 'string' ? dictionary.group : UNGROUPED_NAME);
+            let groupStats = stats.get(group);
+            if (typeof groupStats === 'undefined') {
+                groupStats = {count: 0, enabledCount: 0};
+                stats.set(group, groupStats);
             }
-            countNode.textContent = (count > 0 ? `(${enabledCount} of ${count} enabled)` : '(empty)');
-            checkbox.checked = (count > 0 && enabledCount >= count);
-            checkbox.disabled = (count === 0);
+            ++groupStats.count;
+            if (dictionary.enabled) { ++groupStats.enabledCount; }
+            ++totalCount;
+            if (isDictionaryEnabled(dictionary, disabledGroups)) { ++activeCount; }
+        }
+
+        for (const {name, node, checkbox, countNode} of this._groupHeaders) {
+            const {count, enabledCount} = stats.get(name) ?? {count: 0, enabledCount: 0};
+            const groupEnabled = !disabledGroups.has(name);
+            node.dataset.groupEnabled = `${groupEnabled}`;
+            checkbox.checked = groupEnabled;
+            if (count === 0) {
+                countNode.textContent = '(empty)';
+            } else if (groupEnabled) {
+                countNode.textContent = `(${enabledCount} of ${count} enabled)`;
+            } else {
+                countNode.textContent = `(switched off \u00b7 ${enabledCount} of ${count} selected)`;
+            }
+        }
+
+        for (const {name, node, countNode} of this._groupTabs) {
+            if (name === null) {
+                countNode.textContent = `${activeCount}/${totalCount}`;
+                node.title = `All dictionaries in priority order (${activeCount} of ${totalCount} in use)`;
+                continue;
+            }
+            const {count, enabledCount} = stats.get(name) ?? {count: 0, enabledCount: 0};
+            const groupEnabled = !disabledGroups.has(name);
+            node.dataset.groupEnabled = `${groupEnabled}`;
+            countNode.textContent = (groupEnabled ? `${enabledCount}/${count}` : 'off');
+            node.title = (groupEnabled ? `${enabledCount} of ${count} dictionaries enabled` : 'This group is switched off');
+        }
+
+        for (const row of /** @type {NodeListOf<HTMLElement>} */ (this._dictionaryEntryContainer.querySelectorAll(':scope > .dictionary-row'))) {
+            row.dataset.groupEnabled = `${!disabledGroups.has(row.dataset.groupName ?? UNGROUPED_NAME)}`;
         }
     }
 
@@ -1881,6 +2069,22 @@ export class DictionaryController {
      * @param {boolean} value
      */
     async _setGroupEnabled(name, value) {
+        // Only the group's own switch changes; its dictionaries keep their individual settings.
+        const options = await this._settingsController.getOptions();
+        const groups = normalizeDictionaryGroups(options.dictionaryGroups);
+        const group = groups.find((g) => g.name === name);
+        if (typeof group === 'undefined') { return; }
+        group.enabled = value;
+        await this._saveDictionaryLayout(options, groups);
+        await this.updateDictionariesEnabled();
+    }
+
+    /**
+     * Turns every dictionary of a group on or off individually.
+     * @param {string} name
+     * @param {boolean} value
+     */
+    async _setGroupDictionariesEnabled(name, value) {
         const options = await this._settingsController.getOptions();
         const {dictionaries} = options;
         /** @type {import('settings-modifications').Modification[]} */
@@ -1922,6 +2126,7 @@ export class DictionaryController {
         for (const dictionary of options.dictionaries) {
             if (dictionary.group === name) { dictionary.group = UNGROUPED_NAME; }
         }
+        if (this._selectedGroupTab === name) { this._setSelectedGroupTab(null); }
         await this._saveDictionaryLayout(options, groups);
     }
 
@@ -1975,12 +2180,14 @@ export class DictionaryController {
         modal.setVisible(false);
 
         if (oldName === null) {
-            // New groups start at the top, where they are immediately visible.
-            groups.unshift({name: newName, collapsed: false});
+            // New groups start with the highest priority, and their tab is opened so dictionaries can be added.
+            groups.unshift({name: newName, collapsed: false, enabled: true});
+            this._setSelectedGroupTab(newName);
         } else {
             const group = groups.find((g) => g.name === oldName);
             if (typeof group === 'undefined' || oldName === newName) { return; }
             group.name = newName;
+            if (this._selectedGroupTab === oldName) { this._setSelectedGroupTab(newName); }
             for (const dictionary of options.dictionaries) {
                 if (dictionary.group === oldName) { dictionary.group = newName; }
             }
@@ -2028,7 +2235,7 @@ export class DictionaryController {
                 errorNode.hidden = false;
                 return;
             }
-            groups.unshift({name: groupName, collapsed: false});
+            groups.unshift({name: groupName, collapsed: false, enabled: true});
         }
         modal.setVisible(false);
 
@@ -2049,8 +2256,10 @@ export class DictionaryController {
      */
     _getDragNode(target) {
         if (!(target instanceof Element)) { return null; }
-        const node = /** @type {?HTMLElement} */ (target.closest('.dictionary-row, .dictionary-group-header'));
-        return (node !== null && node.parentNode === this._dictionaryEntryContainer ? node : null);
+        const node = /** @type {?HTMLElement} */ (target.closest('.dictionary-row, .dictionary-group-header, .dictionary-group-tab'));
+        if (node === null) { return null; }
+        const parent = (node.classList.contains('dictionary-group-tab') ? this._groupTabList : this._dictionaryEntryContainer);
+        return (node.parentNode === parent ? node : null);
     }
 
     /**
@@ -2063,6 +2272,10 @@ export class DictionaryController {
             const index = Number.parseInt(node.dataset.index ?? '', 10);
             if (Number.isNaN(index)) { return; }
             this._dragState = {type: 'dictionary', index, node};
+        } else if (node.classList.contains('dictionary-group-tab')) {
+            const {groupName} = node.dataset;
+            if (typeof groupName !== 'string') { return; }
+            this._dragState = {type: 'group', name: groupName, node};
         } else {
             this._dragState = {type: 'group', name: node.dataset.groupName ?? UNGROUPED_NAME, node};
         }
@@ -2083,6 +2296,15 @@ export class DictionaryController {
         const state = this._dragState;
         const node = this._getDragNode(e.target);
         if (state === null || node === null || node === state.node) { return null; }
+        if (node.classList.contains('dictionary-group-tab')) {
+            const targetName = node.dataset.groupName;
+            // The "All" tab isn't a group.
+            if (typeof targetName !== 'string') { return null; }
+            if (state.type === 'dictionary') { return {node, position: 'into'}; }
+            if (targetName === state.name) { return null; }
+            const rect = node.getBoundingClientRect();
+            return {node, position: (e.clientX < rect.left + rect.width / 2 ? 'before' : 'after')};
+        }
         const isHeader = node.classList.contains('dictionary-group-header');
         if (state.type === 'dictionary') {
             if (isHeader) { return {node, position: 'into'}; }
@@ -2127,7 +2349,7 @@ export class DictionaryController {
      */
     _onDragLeave(e) {
         const {relatedTarget} = e;
-        if (relatedTarget instanceof Node && this._dictionaryEntryContainer.contains(relatedTarget)) { return; }
+        if (relatedTarget instanceof Node && (this._dictionaryEntryContainer.contains(relatedTarget) || this._groupTabList.contains(relatedTarget))) { return; }
         this._setDropIndicator(null);
     }
 
@@ -2144,6 +2366,14 @@ export class DictionaryController {
 
         const {node, position} = dropTarget;
         const targetGroupName = node.dataset.groupName ?? UNGROUPED_NAME;
+        if (node.classList.contains('dictionary-group-tab')) {
+            if (state.type === 'dictionary') {
+                void this._moveDictionaryToEndOfGroup(state.index, targetGroupName);
+            } else if (position !== 'into') {
+                void this._moveGroupNextTo(state.name, targetGroupName, position);
+            }
+            return;
+        }
         if (state.type === 'group') {
             void this._moveGroupToGroup(state.name, targetGroupName);
         } else if (position === 'into') {
@@ -2179,6 +2409,41 @@ export class DictionaryController {
         const targetIndex = groups.findIndex((g) => g.name === targetName);
         if (targetIndex < 0) { return; }
         await this._moveGroup(name, targetIndex);
+    }
+
+    /**
+     * @param {string} name
+     * @param {string} targetName
+     * @param {'before'|'after'} position
+     */
+    async _moveGroupNextTo(name, targetName, position) {
+        const options = await this._settingsController.getOptions();
+        const groups = normalizeDictionaryGroups(options.dictionaryGroups);
+        const index = groups.findIndex((g) => g.name === name);
+        if (index < 0) { return; }
+        const group = groups.splice(index, 1)[0];
+        const targetIndex = groups.findIndex((g) => g.name === targetName);
+        if (targetIndex < 0) { return; }
+        groups.splice(targetIndex + (position === 'after' ? 1 : 0), 0, group);
+        await this._saveDictionaryLayout(options, groups);
+    }
+
+    /**
+     * Moves a dictionary to the end of a group.
+     * @param {number} index
+     * @param {string} groupName
+     */
+    async _moveDictionaryToEndOfGroup(index, groupName) {
+        const options = await this._settingsController.getOptions();
+        const {dictionaries} = options;
+        const groups = normalizeDictionaryGroups(options.dictionaryGroups);
+        if (index < 0 || index >= dictionaries.length || !groups.some((g) => g.name === groupName)) { return; }
+        if (dictionaries[index].group === groupName) { return; }
+        const item = dictionaries.splice(index, 1)[0];
+        item.group = groupName;
+        // Sorting by group keeps relative order, so the back of the array is the back of the group.
+        dictionaries.push(item);
+        await this._saveDictionaryLayout(options, groups);
     }
 
     /**

@@ -16,6 +16,7 @@
  */
 
 import {describe, expect, test} from 'vitest';
+import {getDisabledDictionaryGroups, isDictionaryEnabled} from '../ext/js/data/dictionary-group-util.js';
 import {getUngroupedInsertIndex, normalizeDictionaryGroups, sortDictionariesByGroup} from '../ext/js/pages/settings/dictionary-groups.js';
 
 /**
@@ -50,22 +51,37 @@ describe('Dictionary groups', () => {
         expect(normalizeDictionaryGroups(void 0)).toStrictEqual([]);
         expect(normalizeDictionaryGroups([])).toStrictEqual([]);
         // Without user-defined groups there is nothing to organize.
-        expect(normalizeDictionaryGroups([{name: '', collapsed: true}])).toStrictEqual([]);
+        expect(normalizeDictionaryGroups([{name: '', collapsed: true, enabled: true}])).toStrictEqual([]);
         // The ungrouped group is appended when missing; duplicates are dropped.
         expect(normalizeDictionaryGroups([
-            {name: 'A', collapsed: true},
-            {name: 'B', collapsed: false},
-            {name: 'A', collapsed: false},
+            {name: 'A', collapsed: true, enabled: false},
+            {name: 'B', collapsed: false, enabled: true},
+            {name: 'A', collapsed: false, enabled: true},
         ])).toStrictEqual([
-            {name: 'A', collapsed: true},
-            {name: 'B', collapsed: false},
-            {name: '', collapsed: false},
+            {name: 'A', collapsed: true, enabled: false},
+            {name: 'B', collapsed: false, enabled: true},
+            {name: '', collapsed: false, enabled: true},
         ]);
         // The position of the ungrouped group is kept.
         expect(normalizeDictionaryGroups([
-            {name: '', collapsed: false},
-            {name: 'A', collapsed: false},
+            {name: '', collapsed: false, enabled: true},
+            {name: 'A', collapsed: false, enabled: true},
         ]).map(({name}) => name)).toStrictEqual(['', 'A']);
+    });
+
+    test('group switch is separate from the dictionaries\' own toggles', () => {
+        const dictionaries = [createDictionary('1', 'A'), createDictionary('2', 'A'), createDictionary('3', '')];
+        dictionaries[1].enabled = false;
+        const groups = [{name: 'A', collapsed: false, enabled: false}, {name: '', collapsed: false, enabled: true}];
+        const disabled = getDisabledDictionaryGroups(groups);
+        expect(dictionaries.map((d) => isDictionaryEnabled(d, disabled))).toStrictEqual([false, false, true]);
+        // Switching the group back on restores the individual choices.
+        groups[0].enabled = true;
+        const disabled2 = getDisabledDictionaryGroups(groups);
+        expect(dictionaries.map((d) => isDictionaryEnabled(d, disabled2))).toStrictEqual([true, false, true]);
+        // A lone "ungrouped" entry (no named groups) has no effect.
+        expect([...getDisabledDictionaryGroups([{name: '', collapsed: false, enabled: false}])]).toStrictEqual([]);
+        expect([...getDisabledDictionaryGroups(void 0)]).toStrictEqual([]);
     });
 
     test('sortDictionariesByGroup leaves ungrouped setups untouched', () => {
@@ -75,7 +91,7 @@ describe('Dictionary groups', () => {
     });
 
     test('sortDictionariesByGroup makes groups contiguous and keeps relative order', () => {
-        const groups = [{name: 'B', collapsed: false}, {name: '', collapsed: false}, {name: 'A', collapsed: false}];
+        const groups = [{name: 'B', collapsed: false, enabled: true}, {name: '', collapsed: false, enabled: true}, {name: 'A', collapsed: false, enabled: true}];
         const dictionaries = [
             createDictionary('1', 'A'),
             createDictionary('2', ''),
@@ -90,7 +106,7 @@ describe('Dictionary groups', () => {
     });
 
     test('sortDictionariesByGroup ungroups dictionaries of unknown groups', () => {
-        const groups = [{name: 'A', collapsed: false}];
+        const groups = [{name: 'A', collapsed: false, enabled: true}];
         const dictionaries = [createDictionary('1', 'Missing'), createDictionary('2', 'A')];
         expect(sortDictionariesByGroup(dictionaries, groups)).toBe(true);
         expect(summarize(dictionaries)).toStrictEqual(['A/2', '/1']);
@@ -103,8 +119,8 @@ describe('Dictionary groups', () => {
     test('getUngroupedInsertIndex', () => {
         const dictionaries = [createDictionary('1', 'B'), createDictionary('2', ''), createDictionary('3', 'A')];
         expect(getUngroupedInsertIndex(dictionaries, [])).toBe(3);
-        expect(getUngroupedInsertIndex(dictionaries, [{name: 'B', collapsed: false}, {name: '', collapsed: false}, {name: 'A', collapsed: false}])).toBe(2);
-        expect(getUngroupedInsertIndex([createDictionary('1', 'A')], [{name: '', collapsed: false}, {name: 'A', collapsed: false}])).toBe(0);
-        expect(getUngroupedInsertIndex(dictionaries, [{name: 'B', collapsed: false}, {name: 'A', collapsed: false}])).toBe(3);
+        expect(getUngroupedInsertIndex(dictionaries, [{name: 'B', collapsed: false, enabled: true}, {name: '', collapsed: false, enabled: true}, {name: 'A', collapsed: false, enabled: true}])).toBe(2);
+        expect(getUngroupedInsertIndex([createDictionary('1', 'A')], [{name: '', collapsed: false, enabled: true}, {name: 'A', collapsed: false, enabled: true}])).toBe(0);
+        expect(getUngroupedInsertIndex(dictionaries, [{name: 'B', collapsed: false, enabled: true}, {name: 'A', collapsed: false, enabled: true}])).toBe(3);
     });
 });

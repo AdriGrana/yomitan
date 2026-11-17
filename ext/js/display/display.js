@@ -42,6 +42,7 @@ import {DisplayNotification} from './display-notification.js';
 import {ElementOverflowController} from './element-overflow-controller.js';
 import {OptionToggleHotkeyHandler} from './option-toggle-hotkey-handler.js';
 import {QueryParser} from './query-parser.js';
+import {getDisabledDictionaryGroups, isDictionaryEnabled} from '../data/dictionary-group-util.js';
 
 /**
  * @augments EventDispatcher<import('display').Events>
@@ -1311,8 +1312,10 @@ export class Display extends EventDispatcher {
     _getCustomCss(options) {
         const {general: {customPopupCss}, dictionaries} = options;
         let customCss = customPopupCss;
-        for (const {name, enabled, styles = ''} of dictionaries) {
-            if (enabled) {
+        const disabledGroups = getDisabledDictionaryGroups(options.dictionaryGroups);
+        for (const dictionary of dictionaries) {
+            const {name, styles = ''} = dictionary;
+            if (isDictionaryEnabled(dictionary, disabledGroups)) {
                 const escapedTitle = name.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
                 customCss += '\n' + addScopeToCss(styles, `[data-dictionary="${escapedTitle}"]`);
             }
@@ -1380,7 +1383,8 @@ export class Display extends EventDispatcher {
     async _setContentTermsOrKanji(type, urlSearchParams, token) {
         const lookup = (urlSearchParams.get('lookup') !== 'false');
         const wildcardsEnabled = (urlSearchParams.get('wildcards') !== 'off');
-        const hasEnabledDictionaries = this._options ? this._options.dictionaries.some(({enabled}) => enabled) : false;
+        const disabledGroups = getDisabledDictionaryGroups(this._options?.dictionaryGroups);
+        const hasEnabledDictionaries = this._options ? this._options.dictionaries.some((dictionary) => isDictionaryEnabled(dictionary, disabledGroups)) : false;
 
         // Set query
         safePerformance.mark('display:setQuery:start');

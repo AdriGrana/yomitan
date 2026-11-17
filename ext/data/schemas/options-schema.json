@@ -973,7 +973,8 @@
                                     "type": "object",
                                     "required": [
                                         "name",
-                                        "collapsed"
+                                        "collapsed",
+                                        "enabled"
                                     ],
                                     "properties": {
                                         "name": {
@@ -983,6 +984,10 @@
                                         "collapsed": {
                                             "type": "boolean",
                                             "default": false
+                                        },
+                                        "enabled": {
+                                            "type": "boolean",
+                                            "default": true
                                         }
                                     }
                                 }

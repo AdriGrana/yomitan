@@ -45,6 +45,7 @@ import {ClipboardReaderProxy, DictionaryDatabaseProxy, OffscreenProxy, Translato
 import {createSchema, normalizeContext} from './profile-conditions-util.js';
 import {RequestBuilder} from './request-builder.js';
 import {injectStylesheet} from './script-manager.js';
+import {getDisabledDictionaryGroups, isDictionaryEnabled} from '../data/dictionary-group-util.js';
 
 /**
  * This class controls the core logic of the extension, including API calls
@@ -2053,12 +2054,8 @@ export class Backend {
      * @returns {boolean}
      */
     _isAnyDictionaryEnabled(options) {
-        for (const {enabled} of options.dictionaries) {
-            if (enabled) {
-                return true;
-            }
-        }
-        return false;
+        const disabledGroups = getDisabledDictionaryGroups(options.dictionaryGroups);
+        return options.dictionaries.some((dictionary) => isDictionaryEnabled(dictionary, disabledGroups));
     }
 
     /**
@@ -2817,8 +2814,9 @@ export class Backend {
      */
     _getTranslatorEnabledDictionaryMap(options) {
         const enabledDictionaryMap = new Map();
+        const disabledGroups = getDisabledDictionaryGroups(options.dictionaryGroups);
         for (const dictionary of options.dictionaries) {
-            if (!dictionary.enabled) { continue; }
+            if (!isDictionaryEnabled(dictionary, disabledGroups)) { continue; }
             const {name, alias, allowSecondarySearches, partsOfSpeechFilter, useDeinflections, fallbackOnly} = dictionary;
             enabledDictionaryMap.set(name, {
                 index: enabledDictionaryMap.size,

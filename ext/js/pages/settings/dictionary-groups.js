@@ -41,15 +41,15 @@ export function normalizeDictionaryGroups(groups) {
     /** @type {Set<string>} */
     const names = new Set();
     let hasUserGroup = false;
-    for (const {name, collapsed} of (Array.isArray(groups) ? groups : [])) {
+    for (const {name, collapsed, enabled} of (Array.isArray(groups) ? groups : [])) {
         if (typeof name !== 'string' || names.has(name)) { continue; }
         names.add(name);
         if (name !== UNGROUPED_NAME) { hasUserGroup = true; }
-        result.push({name, collapsed: collapsed === true});
+        result.push({name, collapsed: collapsed === true, enabled: enabled !== false});
     }
     if (!hasUserGroup) { return []; }
     if (!names.has(UNGROUPED_NAME)) {
-        result.push({name: UNGROUPED_NAME, collapsed: false});
+        result.push({name: UNGROUPED_NAME, collapsed: false, enabled: true});
     }
     return result;
 }

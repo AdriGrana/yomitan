@@ -2491,6 +2491,115 @@ button.hotkey-list-item-enabled-button[data-scope-count='0'] {
 .dictionary-group-header[data-drop-position=into] {
     box-shadow: inset 0 0 0 0.15em var(--accent-color);
 }
+.dictionary-group-tabs {
+    display: flex;
+    flex-flow: row nowrap;
+    align-items: flex-end;
+    margin-top: 0.75em;
+    border-bottom: var(--thin-border-size) solid var(--separator-color2);
+    user-select: none;
+}
+.dictionary-group-tabs[hidden] {
+    display: none;
+}
+.dictionary-group-tab-list {
+    flex: 1 1 auto;
+    display: flex;
+    flex-flow: row wrap;
+    min-width: 0;
+}
+.dictionary-group-tab,
+.dictionary-group-tab-add {
+    display: flex;
+    flex-flow: row nowrap;
+    align-items: baseline;
+    padding: 0.4em 0.8em;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.dictionary-group-tab {
+    margin-bottom: calc(-1 * var(--thin-border-size));
+    border-bottom: 0.15em solid transparent;
+    color: var(--text-color-light2);
+}
+.dictionary-group-tab:hover,
+.dictionary-group-tab:focus-visible,
+.dictionary-group-tab-add:hover,
+.dictionary-group-tab-add:focus-visible {
+    background-color: var(--background-color-light);
+    outline: none;
+}
+.dictionary-group-tab:hover,
+.dictionary-group-tab:focus-visible {
+    color: var(--text-color);
+}
+.dictionary-group-tab[data-active=true] {
+    border-bottom-color: var(--accent-color);
+    color: var(--text-color);
+    font-weight: bold;
+}
+.dictionary-group-tab[data-ungrouped=true] .dictionary-group-tab-label {
+    font-style: italic;
+}
+.dictionary-group-tab[data-group-enabled=false] .dictionary-group-tab-label {
+    text-decoration: line-through;
+}
+.dictionary-group-tab-count {
+    margin-left: 0.4em;
+    font-size: 0.8em;
+    font-weight: normal;
+    color: var(--text-color-light2);
+}
+.dictionary-group-tab-add {
+    --button-content-color: var(--link-color);
+    --button-border-color: transparent;
+    --button-background-color: transparent;
+    --button-shadow: none;
+    --button-hover-content-color: var(--link-color-hover);
+    --button-hover-border-color: transparent;
+    --button-hover-background-color: var(--background-color-light);
+    --button-hover-shadow: none;
+    --button-active-content-color: var(--link-color-hover);
+    --button-active-border-color: transparent;
+    --button-active-background-color: var(--background-color-light);
+    --button-active-shadow: none;
+    flex: 0 0 auto;
+    margin-bottom: 0.15em;
+}
+.dictionary-group-tab[data-drop-position=before] {
+    box-shadow: inset 0.2em 0 0 0 var(--accent-color);
+}
+.dictionary-group-tab[data-drop-position=after] {
+    box-shadow: inset -0.2em 0 0 0 var(--accent-color);
+}
+.dictionary-group-tab[data-drop-position=into] {
+    box-shadow: inset 0 0 0 0.15em var(--accent-color);
+}
+.dictionary-list[data-group-view=group]>.dictionary-item-top {
+    display: none;
+}
+.dictionary-list[data-group-view=group] .dictionary-group-collapse-button {
+    visibility: hidden;
+}
+.dictionary-list[data-group-view=all] .dictionary-group-name {
+    cursor: pointer;
+}
+.dictionary-list[data-group-view=all] .dictionary-group-name:hover {
+    text-decoration: underline;
+}
+.dictionary-row[data-group-enabled=false]>:not(.dictionary-item-enabled-toggle-container) {
+    opacity: 0.45;
+}
+.dictionary-group-header[data-group-enabled=false] .dictionary-group-name {
+    text-decoration: line-through;
+}
+.dictionary-group-empty {
+    padding: 1em 0.5em;
+    color: var(--text-color-light2);
+}
+.dictionary-group-empty[hidden] {
+    display: none;
+}
 #dictionary-group-name-input,
 #dictionary-set-group-select,
 #dictionary-set-group-new-input {

@@ -298,6 +298,8 @@ export type DictionaryGroupOptions = {
     /** The unique name of the group. The empty string refers to the implicit ungrouped group. */
     name: string;
     collapsed: boolean;
+    /** Whether the group is switched on. Its dictionaries keep their own `enabled` flags while it is off. */
+    enabled: boolean;
 };
 
 export type ParsingOptions = {

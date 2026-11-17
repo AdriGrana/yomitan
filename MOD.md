@@ -6,11 +6,13 @@ This branch (`mod`) is a personal fork of [Yomitan](https://github.com/yomidevs/
 
 ### Dictionary groups ([#796](https://github.com/yomidevs/yomitan/issues/796))
 
-In _Settings → Dictionaries_, dictionaries can be organized into named groups.
+In _Settings → Dictionaries_, dictionaries can be organized into named groups, each shown as a tab.
 
-- **Add Group** creates a group; **Move to group…** in a dictionary's menu (or drag and drop) puts a dictionary into it.
-- Moving a group (arrows, drag and drop, or the group's menu) changes the priority of all of its dictionaries at once.
-- Groups can be collapsed, renamed, deleted (their dictionaries are kept) and enabled or disabled as a whole.
+- The **All** tab shows every dictionary in priority order, grouped. Each group's tab shows only that group.
+- **+ New group** creates a group. Dragging a dictionary onto a group's tab, or **Move to group…** in its menu, puts it into the group.
+- The order of the tabs is the priority of the groups: drag a tab to move a whole group up or down (the arrows and the group's menu work too).
+- A group's switch turns the whole group off without touching its dictionaries' own switches, so turning it back on restores exactly the dictionaries that were selected before.
+- Groups can be renamed and deleted (their dictionaries are kept).
 
 ### Fallback dictionaries ([#1821](https://github.com/yomidevs/yomitan/issues/1821))
 

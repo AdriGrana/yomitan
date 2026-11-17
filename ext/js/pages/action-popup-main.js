@@ -21,6 +21,7 @@ import {Application} from '../application.js';
 import {getAllPermissions, hasRequiredPermissionsForOptions} from '../data/permissions-util.js';
 import {HotkeyHelpController} from '../input/hotkey-help-controller.js';
 import {HotkeyUtil} from '../input/hotkey-util.js';
+import {getDisabledDictionaryGroups, isDictionaryEnabled} from '../data/dictionary-group-util.js';
 
 class DisplayController {
     /**
@@ -328,9 +329,10 @@ class DisplayController {
         const dictionaries = await this._api.getDictionaryInfo();
 
         const enabledDictionaries = new Set();
-        for (const {name, enabled} of options.dictionaries) {
-            if (enabled) {
-                enabledDictionaries.add(name);
+        const disabledGroups = getDisabledDictionaryGroups(options.dictionaryGroups);
+        for (const dictionary of options.dictionaries) {
+            if (isDictionaryEnabled(dictionary, disabledGroups)) {
+                enabledDictionaries.add(dictionary.name);
             }
         }
 
